@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>创建已验证的测试用户</title>
+  <style>
+    body {
+      font-family: monospace;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #1e1e1e;
+      color: #d4d4d4;
+    }
+    .output {
+      background: #252526;
+      padding: 20px;
+      border-radius: 4px;
+      margin-top: 20px;
+      white-space: pre-wrap;
+    }
+    .success { color: #4ec9b0; }
+    .error { color: #f48771; }
+    .info { color: #569cd6; }
+  </style>
+</head>
+<body>
+  <h1>创建已验证的测试用户</h1>
+  <div id="output" class="output">正在创建用户...</div>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+    const SUPABASE_URL = 'https://ogodnvjaiwelqmjqkvda.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9nb2RudmphaXdlbHFtanFrdmRhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5Mzg2NzksImV4cCI6MjA4MDUxNDY3OX0.N7cFB7dGQNavqNfVozwj0MGepDrrk-R8K164s40iYzk';
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const output = document.getElementById('output');
+
+    function log(message, type = 'info') {
+      const span = document.createElement('span');
+      span.className = type;
+      span.textContent = message + '\n';
+      output.appendChild(span);
+    }
+
+    async function createUser() {
+      output.innerHTML = '';
+
+      try {
+        log('📝 创建测试用户...', 'info');
+        log('邮箱: test@test123.com');
+        log('密码: Test123!');
+        log('');
+
+        // 注册用户
+        const { data, error } = await supabase.auth.signUp({
+          email: 'test@test123.com',
+          password: 'Test123!',
+          options: {
+            data: {
+              username: 'Test',
+              display_name: 'Test User',
+            },
+            emailRedirectTo: undefined,
+          }
+        });
+
+        if (error) {
+          log('❌ 注册失败: ' + error.message, 'error');
+          return;
+        }
+
+        log('✅ 用户注册成功！', 'success');
+        log(`用户 ID: ${data.user.id}`);
+        log('');
+
+        // 登出以便测试
+        await supabase.auth.signOut();
+        log('✅ 已登出，可以开始测试登录', 'success');
+        log('');
+        log('='.repeat(50), 'info');
+        log('现在可以在应用中使用以下凭证登录：', 'success');
+        log('邮箱: test@test123.com', 'success');
+        log('密码: Test123!', 'success');
+        log('='.repeat(50), 'info');
+
+      } catch (err) {
+        log('❌ 异常: ' + err.message, 'error');
+      }
+    }
+
+    // 自动执行
+    createUser();
+  </script>
+</body>
+</html>
