@@ -86,7 +86,7 @@ function AppContent() {
       case 'planner':
         return <PlanInputPage />;
       case 'trips':
-        return <MyTripsPage />;
+        return <MyTripsPage onNavigateToPlanner={() => setCurrentTab('planner')} />;
       case 'tips':
         return <TravelTipsPage />;
       case 'discover':

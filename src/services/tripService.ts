@@ -7,6 +7,7 @@
 
 import { supabase } from '@/utils/supabase/client';
 import type { Tables, TablesInsert, TablesUpdate } from '@/types/database';
+import type { TransformedTripData } from '@/utils/tripDataTransformer';
 
 // 类型别名定义
 export type Trip = Tables<'trips'>;
@@ -103,6 +104,126 @@ export const tripService = {
 
     console.log('[tripService] 行程创建成功:', data.id);
     return data;
+  },
+
+  /**
+   * 批量创建行程及其子项
+   * @param transformedData - 预先转换好的行程、每日行程和活动数据
+   * @returns Promise<TripDetail> - 包含每日行程与活动的完整行程
+   */
+  async createTripWithItineraries(transformedData: TransformedTripData): Promise<TripDetail> {
+    console.log('[tripService] 开始批量创建行程数据:', {
+      destination: transformedData.trip.destination,
+      itineraryCount: transformedData.itineraries.length,
+    });
+
+    const createdTrip = await tripService.createTrip(transformedData.trip);
+    console.log('[tripService] 行程创建完成，准备创建每日行程:', {
+      tripId: createdTrip.id,
+      itineraryCount: transformedData.itineraries.length,
+    });
+
+    const itinerariesPayload = transformedData.itineraries.map(({ itinerary }) => ({
+      ...itinerary,
+      trip_id: createdTrip.id,
+    }));
+
+    const { data: createdItineraries, error: itinerariesError } = await supabase
+      .from('trip_itineraries')
+      .insert(itinerariesPayload)
+      .select();
+
+    if (itinerariesError) {
+      console.error('[tripService] 批量创建每日行程失败:', itinerariesError.message);
+      throw new Error(`Failed to create itineraries: ${itinerariesError.message}`);
+    }
+
+    if (!createdItineraries || createdItineraries.length === 0) {
+      throw new Error('Failed to create itineraries: No data returned');
+    }
+
+    console.log('[tripService] 每日行程创建成功，准备创建活动:', {
+      tripId: createdTrip.id,
+      itineraryCount: createdItineraries.length,
+    });
+
+    const itineraryByDay = createdItineraries.reduce<Record<number, TripItinerary>>((acc, itinerary) => {
+      acc[itinerary.day_number] = itinerary;
+      return acc;
+    }, {});
+
+    const activitiesPayload = transformedData.itineraries.flatMap(({ activities, itinerary }) => {
+      const createdItinerary = itineraryByDay[itinerary.day_number];
+
+      if (!createdItinerary) {
+        console.warn('[tripService] 未找到匹配的每日行程记录:', {
+          dayNumber: itinerary.day_number,
+          tripId: createdTrip.id,
+        });
+        return [];
+      }
+
+      return activities.map((activity) => ({
+        ...activity,
+        itinerary_id: createdItinerary.id,
+      }));
+    });
+
+    let createdActivities: Activity[] = [];
+
+    if (activitiesPayload.length > 0) {
+      const { data: insertedActivities, error: activitiesError } = await supabase
+        .from('activities')
+        .insert(activitiesPayload)
+        .select();
+
+      if (activitiesError) {
+        console.error('[tripService] 批量创建活动失败:', activitiesError.message);
+        throw new Error(`Failed to create activities: ${activitiesError.message}`);
+      }
+
+      if (insertedActivities && insertedActivities.length > 0) {
+        createdActivities = insertedActivities;
+      }
+
+      console.log('[tripService] 活动创建成功:', {
+        count: createdActivities.length,
+        itineraryIds: createdItineraries.map((itinerary) => itinerary.id),
+      });
+    } else {
+      console.log('[tripService] 无活动需要创建');
+    }
+
+    const activityMap = createdActivities.reduce<Record<string, Activity[]>>((acc, activity) => {
+      if (!acc[activity.itinerary_id]) {
+        acc[activity.itinerary_id] = [];
+      }
+      acc[activity.itinerary_id].push(activity);
+      return acc;
+    }, {});
+
+    const itinerariesWithActivities = createdItineraries.map((itinerary) => {
+      const activities = activityMap[itinerary.id] || [];
+      activities.sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+
+      return {
+        ...itinerary,
+        activities,
+      };
+    });
+
+    const tripDetail: TripDetail = {
+      ...createdTrip,
+      trip_itineraries: itinerariesWithActivities,
+    };
+
+    console.log('[tripService] 行程及所有子项创建完成:', {
+      tripId: createdTrip.id,
+      itineraryCount: itinerariesWithActivities.length,
+      activityCount: createdActivities.length,
+    });
+
+    return tripDetail;
   },
 
   /**

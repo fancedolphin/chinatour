@@ -3,7 +3,9 @@
 interface ImportMetaEnv {
   readonly VITE_API_BASE_URL: string;
   readonly VITE_ENV: string;
-  // 可以添加更多环境变量
+  readonly VITE_SUPABASE_URL: string;
+  readonly VITE_SUPABASE_ANON_KEY: string;
+  readonly VITE_GEMINI_API_KEY: string;
 }
 
 interface ImportMeta {

@@ -1,28 +1,32 @@
-import { ChevronLeft, Sparkles, Send, Calendar, MapPin, Clock, DollarSign, ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronLeft, Sparkles, Send, Calendar, MapPin, Clock, DollarSign, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
-import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
 import { Separator } from './ui/separator';
-import { RestaurantDetailCard } from './RestaurantDetailCard';
-import { TransportDetailCard } from './TransportDetailCard';
-import { AttractionDetailCard } from './AttractionDetailCard';
-import { ActivityItem } from './ActivityItem';
-import { MealItem } from './MealItem';
-import { getMockRestaurantData, getMockTransportData, getMockAttractionData } from './mock-data';
+import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+import { TripMapViewer } from './TripMapViewer';
+import { useAuth } from '@/presentation/hooks/useAuth';
+import { tripService } from '@/services/tripService';
+import { tripDataTransformer } from '@/utils/tripDataTransformer';
+import { ACTIVITY_LABELS, ACTIVITY_STYLES } from '@/constants/activityTypes';
 
+// --- Types ---
 interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
 }
 
-interface TripPlan {
-  destination: string;
-  dates: string;
-  budget: string;
-  days: DayPlan[];
+interface Activity {
+  time: string;
+  name: string;
+  description: string;
+  type: 'attraction' | 'transport' | 'rest' | 'meal';
+  geoCoordinates?: {
+    lat: number;
+    lng: number;
+  };
 }
 
 interface DayPlan {
@@ -37,47 +41,103 @@ interface DayPlan {
   alternativePlan?: string;
 }
 
-interface Activity {
-  time: string;
-  name: string;
-  description: string;
-  type: 'attraction' | 'transport' | 'rest';
+interface TripPlan {
+  destination: string;
+  dates: string;
+  budget: string;
+  days: DayPlan[];
 }
 
 interface AIPlannerChatPageProps {
   onBack: () => void;
+  onSaveSuccess?: () => void;
   initialPlan?: string;
+  onActivityClick?: (activity: Activity, dayNumber: number) => void;
 }
 
-export function AIPlannerChatPage({ onBack, initialPlan }: AIPlannerChatPageProps) {
+// --- Gemini Configuration ---
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
+
+// Define the Schema for structured output
+const TRIP_PLAN_SCHEMA = {
+  type: SchemaType.OBJECT,
+  properties: {
+    chatResponse: {
+      type: SchemaType.STRING,
+      description: "Conversational response to the user explaining changes or recommendations.",
+    },
+    tripPlan: {
+      type: SchemaType.OBJECT,
+      description: "The full structured trip plan. Return null if no plan is created yet.",
+      nullable: true,
+      properties: {
+        destination: { type: SchemaType.STRING },
+        dates: { type: SchemaType.STRING },
+        budget: { type: SchemaType.STRING },
+        days: {
+          type: SchemaType.ARRAY,
+          items: {
+            type: SchemaType.OBJECT,
+            properties: {
+              day: { type: SchemaType.INTEGER },
+              theme: { type: SchemaType.STRING },
+              activities: {
+                type: SchemaType.ARRAY,
+                items: {
+                  type: SchemaType.OBJECT,
+                  properties: {
+                    time: { type: SchemaType.STRING },
+                    name: { type: SchemaType.STRING },
+                    description: { type: SchemaType.STRING },
+                    type: { type: SchemaType.STRING },
+                    geoCoordinates: {
+                      type: SchemaType.OBJECT,
+                      nullable: true,
+                      description: "Latitude and longitude for the location.",
+                      properties: {
+                        lat: { type: SchemaType.NUMBER },
+                        lng: { type: SchemaType.NUMBER }
+                      },
+                      required: ['lat', 'lng']
+                    }
+                  },
+                  required: ['time', 'name', 'description', 'type'],
+                },
+              },
+              meals: {
+                type: SchemaType.OBJECT,
+                properties: {
+                  breakfast: { type: SchemaType.STRING, nullable: true },
+                  lunch: { type: SchemaType.STRING, nullable: true },
+                  dinner: { type: SchemaType.STRING, nullable: true },
+                },
+              },
+              alternativePlan: { type: SchemaType.STRING, nullable: true },
+            },
+            required: ['day', 'theme', 'activities', 'meals'],
+          },
+        },
+      },
+      required: ['destination', 'dates', 'budget', 'days'],
+    },
+  },
+  required: ['chatResponse'],
+};
+
+export function AIPlannerChatPage({ onBack, onSaveSuccess, initialPlan, onActivityClick }: AIPlannerChatPageProps) {
+  const { currentUser } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [currentPlan, setCurrentPlan] = useState<TripPlan | null>(null);
   const [showPlanPreview, setShowPlanPreview] = useState(true);
+  const [isMapOpen, setIsMapOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [expandedDays, setExpandedDays] = useState<number[]>([1]);
-  
-  // Detail card states
-  const [selectedRestaurant, setSelectedRestaurant] = useState<any>(null);
-  const [selectedTransport, setSelectedTransport] = useState<any>(null);
-  const [selectedAttraction, setSelectedAttraction] = useState<any>(null);
 
-  useEffect(() => {
-    if (initialPlan) {
-      // Determine if it's a guided questionnaire or existing plan
-      const isGuidedPlan = initialPlan.includes('我想规划一次旅行');
-      
-      let response = '';
-      if (isGuidedPlan) {
-        response = `太好了！根据你提供的信息，我为你定制了一个完美的${getMockPlan().destination}行程！✨\n\n我已经为你准备了：\n✓ 详细的每日行程安排\n✓ 符合你预算的景点和活动\n✓ 根据你的风格偏好精选的体验\n✓ 每天的餐厅推荐（早中晚餐）\n✓ 雨天备选方案\n\n请在右侧查看完整规划。你随时可以告诉我：\n• "调整预算到经济型"\n• "推荐更多美食餐厅"\n• "添加XXX景点"\n• "优化路线顺序"`;
-      } else {
-        response = `我已经分析了你的行程计划！这是一个${getMockPlan().destination}的行程。\n\n我帮你整理了详细的行程安排，包括每天的景点、餐厅推荐和备选方案。你可以在右侧查看完整规划。\n\n你可以告诉我：\n• 调整预算档位\n• 更换某天的餐厅\n• 添加特定景点\n• 获取雨天备选方案\n• 优化路线顺序`;
-      }
-      
-      simulateAIResponse(response, true);
-    }
-  }, [initialPlan]);
+  // Ref to store chat history for the API context
+  const chatHistoryRef = useRef<Array<{ role: string; parts: Array<{ text: string }> }>>([]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -87,183 +147,135 @@ export function AIPlannerChatPage({ onBack, initialPlan }: AIPlannerChatPageProp
     scrollToBottom();
   }, [messages]);
 
-  const getMockPlan = (): TripPlan => {
-    return {
-      destination: '伦敦 · 爱丁堡',
-      dates: '2024年10月1日 - 10月7日',
-      budget: '£3,500',
-      days: [
-        {
-          day: 1,
-          theme: '初遇伦敦',
-          activities: [
-            {
-              time: '09:00',
-              name: '抵达希思罗机场',
-              description: '办理入境手续，领取行李',
-              type: 'transport',
-            },
-            {
-              time: '11:00',
-              name: '酒店入住',
-              description: 'Premier Inn London City Tower Hill',
-              type: 'rest',
-            },
-            {
-              time: '14:00',
-              name: '大英博物馆',
-              description: '世界三大博物馆之一，馆藏800万件文物',
-              type: 'attraction',
-            },
-            {
-              time: '17:30',
-              name: '牛津街购物',
-              description: '伦敦最繁华的商业街，体验都市风情',
-              type: 'attraction',
-            },
-          ],
-          meals: {
-            lunch: 'Dishoom - 印度风味料理，人均£25',
-            dinner: 'Gordon Ramsay Bar & Grill - 英式牛排，人均£60',
-          },
-          alternativePlan: '如遇下雨：改为参观自然历史博物馆 + V&A博物馆（室内活动）',
-        },
-        {
-          day: 2,
-          theme: '皇家风范',
-          activities: [
-            {
-              time: '09:00',
-              name: '白金汉宫',
-              description: '观看卫兵换岗仪式（11:00开始）',
-              type: 'attraction',
-            },
-            {
-              time: '12:00',
-              name: '圣詹姆斯公园',
-              description: '伦敦最美的皇家公园之一',
-              type: 'attraction',
-            },
-            {
-              time: '14:30',
-              name: '西敏寺',
-              description: '英国王室婚礼与加冕地',
-              type: 'attraction',
-            },
-            {
-              time: '16:30',
-              name: '伦敦眼',
-              description: '泰晤士河畔的巨型摩天轮',
-              type: 'attraction',
-            },
-          ],
-          meals: {
-            breakfast: 'The Breakfast Club - 英式早餐，人均£15',
-            lunch: 'Borough Market - 市集小吃，人均£20',
-            dinner: 'Sketch - 网红下午茶+晚餐，人均£80',
-          },
-          alternativePlan: '如遇下雨：伦敦塔 + 塔桥 + Sky Garden（有遮蔽的景点）',
-        },
-        {
-          day: 3,
-          theme: '温莎古堡',
-          activities: [
-            {
-              time: '08:30',
-              name: '前往温莎',
-              description: '搭乘火车，约1小时车程',
-              type: 'transport',
-            },
-            {
-              time: '10:00',
-              name: '温莎城堡',
-              description: '英国女王的官方居所，世界最大的有人居住城堡',
-              type: 'attraction',
-            },
-            {
-              time: '14:00',
-              name: '伊顿公学',
-              description: '参观英国最著名的贵族学校',
-              type: 'attraction',
-            },
-            {
-              time: '16:30',
-              name: '返回伦敦',
-              description: '火车返程',
-              type: 'transport',
-            },
-          ],
-          meals: {
-            breakfast: '酒店早餐',
-            lunch: 'The Duchess of Cambridge - 温莎当地餐厅，人均£30',
-            dinner: 'Flat Iron - 伦敦牛排馆，人均£25',
-          },
-          alternativePlan: '如遇下雨：照常参观（城堡内部为主）+ 增加Windsor Royal Shopping区购物时间',
-        },
-      ],
-    };
-  };
-
-  const simulateAIResponse = (content: string, withPlan: boolean = false) => {
+  // --- API Interaction ---
+  const callGemini = async (userMessage: string) => {
     setIsTyping(true);
-    
-    setTimeout(() => {
+    try {
+      const genAI = new GoogleGenerativeAI(API_KEY);
+      const model = genAI.getGenerativeModel({
+        model: 'gemini-2.5-flash',
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: TRIP_PLAN_SCHEMA,
+        },
+        systemInstruction: `You are an expert Travel Planner AI. Your goal is to help users plan trips and output structured JSON data.
+Rules:
+1. Always respond in JSON format matching the provided schema.
+2. The 'chatResponse' field should be a friendly, helpful message in Chinese using emojis.
+3. The 'tripPlan' field should be the full itinerary.
+4. If the user asks to modify the plan, return the MODIFIED full plan in 'tripPlan'.
+5. For every activity, provide accurate 'geoCoordinates' (lat, lng) for map display.
+6. Use appropriate currency (£ for UK, ¥ for China, etc.).
+7. Ensure times are sequential and realistic.`,
+      });
+
+      // Build context with current plan if exists
+      let contextMessage = userMessage;
+      if (currentPlan) {
+        contextMessage = `Current Plan: ${JSON.stringify(currentPlan)}. User Request: ${userMessage}`;
+      }
+
+      const chat = model.startChat({
+        history: chatHistoryRef.current,
+      });
+
+      const result = await chat.sendMessage(contextMessage);
+      const responseText = result.response.text();
+
+      if (!responseText) throw new Error("No response from AI");
+
+      const data = JSON.parse(responseText);
+
+      // Update UI State
       setMessages(prev => [
         ...prev,
-        {
-          role: 'assistant',
-          content,
-          timestamp: new Date(),
-        },
+        { role: 'assistant', content: data.chatResponse, timestamp: new Date() }
       ]);
-      setIsTyping(false);
-      
-      if (withPlan) {
-        setCurrentPlan(getMockPlan());
+
+      if (data.tripPlan) {
+        setCurrentPlan(data.tripPlan);
+        setExpandedDays([1]);
       }
-    }, 1000);
+
+      // Update History Ref
+      chatHistoryRef.current = [
+        ...chatHistoryRef.current,
+        { role: 'user', parts: [{ text: userMessage }] },
+        { role: 'model', parts: [{ text: responseText }] }
+      ];
+    } catch (error) {
+      console.error("Gemini API Error:", error);
+      setMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: "抱歉，连接AI服务时出现问题，请稍后重试。", timestamp: new Date() }
+      ]);
+    } finally {
+      setIsTyping(false);
+    }
   };
 
-  const handleSend = () => {
-    if (!inputValue.trim()) return;
+  // Initial Load Trigger
+  useEffect(() => {
+    if (initialPlan && messages.length === 0) {
+      handleSend(initialPlan);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSend = (textOverride?: string) => {
+    const text = textOverride || inputValue;
+    if (!text.trim()) return;
 
     const userMessage: Message = {
       role: 'user',
-      content: inputValue,
+      content: text,
       timestamp: new Date(),
     };
-
     setMessages(prev => [...prev, userMessage]);
     setInputValue('');
+    callGemini(text);
+  };
 
-    // Simulate different AI responses based on keywords
-    const lowerInput = inputValue.toLowerCase();
-    
-    if (lowerInput.includes('预算') || lowerInput.includes('便宜') || lowerInput.includes('省钱')) {
-      simulateAIResponse(
-        '好的！我帮你调整为经济档预算方案。\n\n主要调整：\n• 总预算从£3,500降至£2,200\n• 餐厅改为更实惠的选择\n• 住宿调整为3星酒店\n• 增加超市购物和自助餐选项\n\n已更新右侧行程，请查看！',
-        true
+  const handleSavePlan = async () => {
+    if (!currentPlan) return;
+    if (!currentUser) {
+      setMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: "请先登录后再保存行程 🔐", timestamp: new Date() }
+      ]);
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const transformedData = await tripDataTransformer.transformWithEnhancement(
+        currentPlan,
+        currentUser.id,
       );
-    } else if (lowerInput.includes('餐厅') || lowerInput.includes('美食') || lowerInput.includes('吃')) {
-      simulateAIResponse(
-        '当然！我为你推荐更多特色餐厅：\n\n**第1天额外推荐**\n• Hoppers - 斯里兰卡街头小吃，人均£20\n• Padella - 意大利手工面，人均£15\n\n**第2天额外推荐**\n• Duck & Waffle - 24小时营业高空餐厅，人均£50\n• Bao - 台式刈包，人均£18\n\n需要我更新到行程中吗？',
-        false
-      );
-    } else if (lowerInput.includes('雨天') || lowerInput.includes('下雨') || lowerInput.includes('天气')) {
-      simulateAIResponse(
-        '已为每天准备了雨天备选方案！\n\n雨天推荐活动：\n• 博物馆群（大英、自然历史、V&A）\n• 购物中心（Westfield、Harrods）\n• 室内市场（Borough Market、Camden Market）\n• 剧院音乐剧（西区剧院）\n• 室内景点（伦敦地牢、杜莎夫人蜡像馆）\n\n这些都已添加到每天的"雨天备选方案"中。',
-        true
-      );
-    } else if (lowerInput.includes('景点') || lowerInput.includes('地方') || lowerInput.includes('推荐')) {
-      simulateAIResponse(
-        '为你补充一些小众但值得一去的地方：\n\n📍 **肖迪奇区（Shoreditch）**\n创意街头艺术和独立咖啡馆\n\n📍 **格林威治（Greenwich）**\n本初子午线、皇家天文台、集市\n\n📍 **诺丁山（Notting Hill）**\n彩色房屋街区、古董市场\n\n📍 **利德贺市场（Leadenhall Market）**\n哈利波特取景地\n\n需要我加入行程吗？',
-        false
-      );
-    } else {
-      simulateAIResponse(
-        '我理解了你的需求！让我帮你优化行程。\n\n已完成：\n✓ 分析了你的偏好\n✓ 优化了路线顺序\n✓ 更新了时间安排\n✓ 补充了交通信息\n\n请查看右侧更新的行程方案。还有其他需要调整的吗？',
-        true
-      );
+      console.log('[AIPlannerChatPage] 行程保存数据转换完成:', {
+        destination: transformedData.trip.destination,
+        itineraryCount: transformedData.itineraries.length,
+      });
+
+      const savedTrip = await tripService.createTripWithItineraries(transformedData);
+      console.log('[AIPlannerChatPage] 行程保存完成:', savedTrip.id);
+
+      setMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: "✅ 行程已成功保存！你可以在「我的行程」中查看和编辑。", timestamp: new Date() }
+      ]);
+
+      if (onSaveSuccess) {
+        onSaveSuccess();
+      }
+    } catch (e) {
+      console.error("Save failed", e);
+      setMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: "保存行程失败，请稍后重试。", timestamp: new Date() }
+      ]);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -273,36 +285,53 @@ export function AIPlannerChatPage({ onBack, initialPlan }: AIPlannerChatPageProp
     );
   };
 
-  // Handle click functions
-  const handleActivityClick = (activity: Activity) => {
-    if (activity.type === 'transport') {
-      const data = getMockTransportData(activity.name, '酒店');
-      setSelectedTransport(data);
-    } else if (activity.type === 'attraction') {
-      const data = getMockAttractionData(activity.name);
-      setSelectedAttraction(data);
-    }
+  // Flatten activities for map rendering
+  const getFlattenedLocations = () => {
+    if (!currentPlan) return [];
+    const locations: Array<{
+      name: string;
+      description: string;
+      coordinates: { lat: number; lng: number };
+      day: number;
+    }> = [];
+    currentPlan.days.forEach(day => {
+      day.activities.forEach(act => {
+        if (act.geoCoordinates && act.geoCoordinates.lat && act.geoCoordinates.lng) {
+          locations.push({
+            name: act.name,
+            description: act.description,
+            coordinates: act.geoCoordinates,
+            day: day.day
+          });
+        }
+      });
+    });
+    return locations;
   };
 
-  const handleMealClick = (mealInfo: string) => {
-    const restaurantName = mealInfo.split(' - ')[0];
-    const data = getMockRestaurantData(restaurantName);
-    if (data) {
-      setSelectedRestaurant(data);
+  const handleOpenMap = () => {
+    const locs = getFlattenedLocations();
+    if (locs.length === 0) {
+      setMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: "当前行程暂无坐标数据，无法显示地图。", timestamp: new Date() }
+      ]);
+      return;
     }
+    setIsMapOpen(true);
   };
 
   return (
-    <div className="h-screen bg-gray-50 flex flex-col">
+    <div className="h-screen bg-gray-50 flex flex-col font-sans overflow-hidden">
       {/* Header */}
-      <div className="bg-white border-b border-gray-200 shrink-0">
+      <div className="flex-none sticky top-0 bg-white border-b border-gray-200 z-40">
         <div className="max-w-screen-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={onBack} className="p-1">
+            <button onClick={onBack} className="p-1 hover:bg-gray-100 rounded-full transition-colors">
               <ChevronLeft className="w-6 h-6 text-gray-700" />
             </button>
             <div>
-              <h1 className="text-gray-900">AI 行程规划助手</h1>
+              <h1 className="text-gray-900 font-semibold">AI 行程规划助手</h1>
               <p className="text-xs text-gray-500">智能对话，实时更新方案</p>
             </div>
           </div>
@@ -320,60 +349,35 @@ export function AIPlannerChatPage({ onBack, initialPlan }: AIPlannerChatPageProp
       {/* Main Content */}
       <div className="flex-1 flex max-w-screen-2xl mx-auto w-full overflow-hidden">
         {/* Chat Area */}
-        <div className={`flex-1 flex flex-col ${showPlanPreview && currentPlan ? 'md:border-r border-gray-200' : ''}`}>
-          {/* Messages - Scrollable area */}
-          <ScrollArea className="flex-1 px-4 pt-4">
-            <div className="max-w-3xl mx-auto space-y-4 pb-4">
-              {messages.length === 0 && (
-                <div className="text-center py-12">
-                  <div className="w-16 h-16 bg-gradient-to-br from-red-500 to-pink-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
+        <div className={`flex-1 flex flex-col h-full overflow-hidden relative ${showPlanPreview ? 'md:border-r border-gray-200' : ''}`}>
+          {/* Messages */}
+          <ScrollArea className="flex-1 p-4">
+            <div className="max-w-3xl mx-auto space-y-4">
+              {messages.length === 0 && !isTyping && (
+                <div className="text-center py-12 animate-in fade-in zoom-in duration-500">
+                  <div className="w-16 h-16 bg-gradient-to-br from-red-500 to-pink-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
                     <Sparkles className="w-8 h-8 text-white" />
                   </div>
-                  <h2 className="text-gray-900 mb-2">开始规划你的行程</h2>
+                  <h2 className="text-xl font-bold text-gray-900 mb-2">开始规划你的行程</h2>
                   <p className="text-sm text-gray-600 mb-6">
                     告诉我你的需求，我会实时为你生成和优化行程方案
                   </p>
                   <div className="grid grid-cols-2 gap-2 max-w-md mx-auto">
-                    <button
-                      onClick={() => {
-                        setInputValue('帮我规划一个伦敦7日游');
-                        setTimeout(() => handleSend(), 100);
-                      }}
-                      className="text-left p-3 bg-white rounded-lg border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-colors"
-                    >
-                      <p className="text-sm text-gray-900">伦敦7日深度游</p>
-                      <p className="text-xs text-gray-500 mt-1">经典+小众景点</p>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setInputValue('预算有限，帮我优化行程');
-                        setTimeout(() => handleSend(), 100);
-                      }}
-                      className="text-left p-3 bg-white rounded-lg border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-colors"
-                    >
-                      <p className="text-sm text-gray-900">经济型方案</p>
-                      <p className="text-xs text-gray-500 mt-1">省钱攻略</p>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setInputValue('推荐美食餐厅');
-                        setTimeout(() => handleSend(), 100);
-                      }}
-                      className="text-left p-3 bg-white rounded-lg border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-colors"
-                    >
-                      <p className="text-sm text-gray-900">美食推荐</p>
-                      <p className="text-xs text-gray-500 mt-1">特色餐厅</p>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setInputValue('准备雨天备选方案');
-                        setTimeout(() => handleSend(), 100);
-                      }}
-                      className="text-left p-3 bg-white rounded-lg border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-colors"
-                    >
-                      <p className="text-sm text-gray-900">雨天方案</p>
-                      <p className="text-xs text-gray-500 mt-1">室内活动</p>
-                    </button>
+                    {[
+                      { title: "伦敦7日深度游", sub: "经典+小众景点", prompt: "帮我规划一个伦敦7日游，包含大英博物馆和一些小众景点" },
+                      { title: "经济型方案", sub: "省钱攻略", prompt: "我想去英国玩，但是预算有限，帮我做一个经济型方案" },
+                      { title: "美食推荐", sub: "特色餐厅", prompt: "推荐一些伦敦当地人爱吃的美食餐厅" },
+                      { title: "雨天方案", sub: "室内活动", prompt: "如果在伦敦遇到下雨天，有什么室内活动的备选方案？" }
+                    ].map((item, i) => (
+                      <button
+                        key={i}
+                        onClick={() => handleSend(item.prompt)}
+                        className="text-left p-3 bg-white rounded-lg border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-all hover:shadow-md"
+                      >
+                        <p className="text-sm font-medium text-gray-900">{item.title}</p>
+                        <p className="text-xs text-gray-500 mt-1">{item.sub}</p>
+                      </button>
+                    ))}
                   </div>
                 </div>
               )}
@@ -381,10 +385,10 @@ export function AIPlannerChatPage({ onBack, initialPlan }: AIPlannerChatPageProp
               {messages.map((message, index) => (
                 <div
                   key={index}
-                  className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-2 duration-300`}
                 >
                   <div
-                    className={`max-w-[85%] rounded-2xl px-4 py-3 ${
+                    className={`max-w-[85%] rounded-2xl px-4 py-3 shadow-sm ${
                       message.role === 'user'
                         ? 'bg-red-500 text-white'
                         : 'bg-white border border-gray-200 text-gray-900'
@@ -393,7 +397,7 @@ export function AIPlannerChatPage({ onBack, initialPlan }: AIPlannerChatPageProp
                     {message.role === 'assistant' && (
                       <div className="flex items-center gap-2 mb-2">
                         <Sparkles className="w-4 h-4 text-red-500" />
-                        <span className="text-xs text-gray-500">AI 助手</span>
+                        <span className="text-xs font-medium text-gray-500">AI 助手</span>
                       </div>
                     )}
                     <div className="text-sm whitespace-pre-wrap leading-relaxed">
@@ -407,22 +411,21 @@ export function AIPlannerChatPage({ onBack, initialPlan }: AIPlannerChatPageProp
               ))}
 
               {isTyping && (
-                <div className="flex justify-start">
-                  <div className="bg-white border border-gray-200 rounded-2xl px-4 py-3">
+                <div className="flex justify-start animate-pulse">
+                  <div className="bg-white border border-gray-200 rounded-2xl px-4 py-3 shadow-sm">
                     <div className="flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-red-500 animate-pulse" />
+                      <Sparkles className="w-4 h-4 text-red-500" />
                       <span className="text-sm text-gray-600">AI 正在思考...</span>
                     </div>
                   </div>
                 </div>
               )}
-
               <div ref={messagesEndRef} />
             </div>
           </ScrollArea>
 
-          {/* Input Area - Fixed at bottom of chat area */}
-          <div className="border-t border-gray-200 bg-white p-4 shadow-lg">
+          {/* Input Area */}
+          <div className="flex-none border-t border-gray-200 bg-white/90 backdrop-blur-sm p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10">
             <div className="max-w-3xl mx-auto">
               <div className="flex gap-2">
                 <Textarea
@@ -435,18 +438,18 @@ export function AIPlannerChatPage({ onBack, initialPlan }: AIPlannerChatPageProp
                       handleSend();
                     }
                   }}
-                  className="flex-1 min-h-[60px] max-h-[120px] resize-none"
+                  className="flex-1 min-h-[60px] max-h-[120px] resize-none focus:border-red-400 focus:ring-red-400"
                 />
                 <Button
-                  onClick={handleSend}
+                  onClick={() => handleSend()}
                   disabled={!inputValue.trim() || isTyping}
-                  className="bg-red-500 hover:bg-red-600 self-end"
+                  className="bg-red-500 hover:bg-red-600 self-end transition-all hover:shadow-lg disabled:opacity-50"
                   size="lg"
                 >
                   <Send className="w-5 h-5" />
                 </Button>
               </div>
-              <div className="flex gap-2 mt-2 text-xs text-gray-500">
+              <div className="flex gap-2 mt-2 text-xs text-gray-500 justify-end">
                 <span>💡 按 Enter 发送，Shift + Enter 换行</span>
               </div>
             </div>
@@ -455,28 +458,28 @@ export function AIPlannerChatPage({ onBack, initialPlan }: AIPlannerChatPageProp
 
         {/* Plan Preview Sidebar */}
         {showPlanPreview && currentPlan && (
-          <div className="w-full md:w-[400px] lg:w-[480px] bg-white border-l border-gray-200 flex flex-col">
-            <div className="p-4 border-b border-gray-200">
-              <h2 className="text-gray-900 mb-1">当前方案</h2>
+          <div className="w-full md:w-[400px] lg:w-[480px] bg-white border-l border-gray-200 flex flex-col h-full animate-in slide-in-from-right duration-300 overflow-hidden">
+            <div className="flex-none p-4 border-b border-gray-200 bg-white sticky top-0 z-10">
+              <h2 className="text-gray-900 font-semibold">当前方案</h2>
               <p className="text-xs text-gray-500">实时更新中</p>
             </div>
 
             <ScrollArea className="flex-1 p-4">
-              <div className="space-y-4">
+              <div className="space-y-4 pb-4">
                 {/* Trip Summary */}
-                <div className="bg-gradient-to-br from-red-50 to-pink-50 rounded-xl p-4">
-                  <h3 className="text-gray-900 mb-3">{currentPlan.destination}</h3>
+                <div className="bg-gradient-to-br from-red-50 to-pink-50 rounded-xl p-4 border border-red-100">
+                  <h3 className="text-lg font-bold text-gray-900 mb-3">{currentPlan.destination}</h3>
                   <div className="space-y-2 text-sm">
-                    <div className="flex items-center gap-2 text-gray-600">
-                      <Calendar className="w-4 h-4" />
+                    <div className="flex items-center gap-2 text-gray-700">
+                      <Calendar className="w-4 h-4 text-red-500" />
                       {currentPlan.dates}
                     </div>
-                    <div className="flex items-center gap-2 text-gray-600">
-                      <DollarSign className="w-4 h-4" />
+                    <div className="flex items-center gap-2 text-gray-700">
+                      <DollarSign className="w-4 h-4 text-red-500" />
                       预算：{currentPlan.budget}
                     </div>
-                    <div className="flex items-center gap-2 text-gray-600">
-                      <Clock className="w-4 h-4" />
+                    <div className="flex items-center gap-2 text-gray-700">
+                      <Clock className="w-4 h-4 text-red-500" />
                       共 {currentPlan.days.length} 天
                     </div>
                   </div>
@@ -484,17 +487,17 @@ export function AIPlannerChatPage({ onBack, initialPlan }: AIPlannerChatPageProp
 
                 {/* Daily Plans */}
                 {currentPlan.days.map((day) => (
-                  <div key={day.day} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                  <div key={day.day} className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                     <button
                       onClick={() => toggleDay(day.day)}
                       className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
                     >
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-red-500 text-white rounded-lg flex items-center justify-center shrink-0">
+                        <div className="w-10 h-10 bg-red-500 text-white rounded-lg flex items-center justify-center shrink-0 font-bold shadow-sm">
                           <span className="text-sm">D{day.day}</span>
                         </div>
                         <div className="text-left">
-                          <p className="text-sm text-gray-900">{day.theme}</p>
+                          <p className="text-sm font-medium text-gray-900">{day.theme}</p>
                           <p className="text-xs text-gray-500">{day.activities.length} 个活动</p>
                         </div>
                       </div>
@@ -506,19 +509,27 @@ export function AIPlannerChatPage({ onBack, initialPlan }: AIPlannerChatPageProp
                     </button>
 
                     {expandedDays.includes(day.day) && (
-                      <div className="px-4 pb-4 space-y-3">
+                      <div className="px-4 pb-4 space-y-3 bg-white">
                         <Separator />
-                        
                         {/* Activities */}
-                        <div className="space-y-2">
+                        <div className="space-y-3 pt-2">
                           {day.activities.map((activity, idx) => (
-                            <div key={idx} className="flex gap-3">
-                              <div className="text-xs text-gray-500 w-12 shrink-0 pt-0.5">
+                            <div
+                              key={idx}
+                              className="flex gap-3 group cursor-pointer hover:bg-gray-50 rounded-lg p-2 -mx-2 transition-colors"
+                              onClick={() => onActivityClick?.(activity, day.day)}
+                            >
+                              <div className="text-xs font-medium text-gray-500 w-12 shrink-0 pt-0.5">
                                 {activity.time}
                               </div>
                               <div className="flex-1">
-                                <p className="text-sm text-gray-900">{activity.name}</p>
-                                <p className="text-xs text-gray-500 mt-0.5">{activity.description}</p>
+                                <div className="flex items-baseline gap-2">
+                                  <p className="text-sm font-medium text-gray-900">{activity.name}</p>
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${ACTIVITY_STYLES[activity.type]}`}>
+                                    {ACTIVITY_LABELS[activity.type]}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-0.5 leading-normal">{activity.description}</p>
                               </div>
                             </div>
                           ))}
@@ -528,20 +539,31 @@ export function AIPlannerChatPage({ onBack, initialPlan }: AIPlannerChatPageProp
                         {(day.meals.breakfast || day.meals.lunch || day.meals.dinner) && (
                           <>
                             <Separator />
-                            <div className="space-y-1.5">
-                              <p className="text-xs text-gray-500 flex items-center gap-1">
-                                <span>🍽️</span>
+                            <div className="bg-yellow-50/50 p-3 rounded-lg space-y-2">
+                              <p className="text-xs font-semibold text-gray-600 flex items-center gap-1.5">
+                                <span className="text-base">🍽️</span>
                                 <span>餐饮推荐</span>
                               </p>
-                              {day.meals.breakfast && (
-                                <p className="text-xs text-gray-700 pl-5">早餐：{day.meals.breakfast}</p>
-                              )}
-                              {day.meals.lunch && (
-                                <p className="text-xs text-gray-700 pl-5">午餐：{day.meals.lunch}</p>
-                              )}
-                              {day.meals.dinner && (
-                                <p className="text-xs text-gray-700 pl-5">晚餐：{day.meals.dinner}</p>
-                              )}
+                              <div className="space-y-1.5">
+                                {day.meals.breakfast && (
+                                  <div className="flex gap-2 text-xs">
+                                    <span className="text-gray-400 w-8 shrink-0">早餐</span>
+                                    <span className="text-gray-700">{day.meals.breakfast}</span>
+                                  </div>
+                                )}
+                                {day.meals.lunch && (
+                                  <div className="flex gap-2 text-xs">
+                                    <span className="text-gray-400 w-8 shrink-0">午餐</span>
+                                    <span className="text-gray-700">{day.meals.lunch}</span>
+                                  </div>
+                                )}
+                                {day.meals.dinner && (
+                                  <div className="flex gap-2 text-xs">
+                                    <span className="text-gray-400 w-8 shrink-0">晚餐</span>
+                                    <span className="text-gray-700">{day.meals.dinner}</span>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </>
                         )}
@@ -550,9 +572,11 @@ export function AIPlannerChatPage({ onBack, initialPlan }: AIPlannerChatPageProp
                         {day.alternativePlan && (
                           <>
                             <Separator />
-                            <div className="bg-blue-50 rounded-lg p-3">
-                              <p className="text-xs text-gray-500 mb-1">🌧️ 雨天备选</p>
-                              <p className="text-xs text-gray-700">{day.alternativePlan}</p>
+                            <div className="bg-blue-50 rounded-lg p-3 border border-blue-100">
+                              <p className="text-xs font-semibold text-blue-700 mb-1 flex items-center gap-1">
+                                <span>🌧️</span> 雨天备选
+                              </p>
+                              <p className="text-xs text-blue-600 leading-relaxed">{day.alternativePlan}</p>
                             </div>
                           </>
                         )}
@@ -562,40 +586,47 @@ export function AIPlannerChatPage({ onBack, initialPlan }: AIPlannerChatPageProp
                 ))}
 
                 {/* Action Buttons */}
-                <div className="flex gap-2">
-                  <Button variant="outline" className="flex-1" size="sm">
+                <div className="flex gap-2 pt-2">
+                  <Button 
+                    variant="outline" 
+                    className="flex-1 hover:border-red-200 hover:bg-red-50 hover:text-red-600" 
+                    size="sm"
+                    onClick={handleOpenMap}
+                  >
                     <MapPin className="w-4 h-4 mr-2" />
                     查看地图
                   </Button>
-                  <Button className="flex-1 bg-red-500 hover:bg-red-600" size="sm">
-                    保存方案
+                  <Button 
+                    className="flex-1 bg-red-500 hover:bg-red-600" 
+                    size="sm"
+                    onClick={handleSavePlan}
+                    disabled={isSaving}
+                  >
+                    {isSaving ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        保存中...
+                      </>
+                    ) : (
+                      '保存方案'
+                    )}
                   </Button>
                 </div>
               </div>
             </ScrollArea>
           </div>
         )}
-      </div>
 
-      {/* Detail Cards */}
-      {selectedRestaurant && (
-        <RestaurantDetailCard
-          restaurant={selectedRestaurant}
-          onClose={() => setSelectedRestaurant(null)}
-        />
-      )}
-      {selectedTransport && (
-        <TransportDetailCard
-          transport={selectedTransport}
-          onClose={() => setSelectedTransport(null)}
-        />
-      )}
-      {selectedAttraction && (
-        <AttractionDetailCard
-          attraction={selectedAttraction}
-          onClose={() => setSelectedAttraction(null)}
-        />
-      )}
+        {/* Map Viewer Modal */}
+        {currentPlan && (
+          <TripMapViewer 
+            isOpen={isMapOpen} 
+            onClose={() => setIsMapOpen(false)} 
+            locations={getFlattenedLocations()}
+            destination={currentPlan.destination}
+          />
+        )}
+      </div>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChevronLeft, Calendar, MapPin, Share2, Download, Map, ChevronDown, ChevronUp, Clock, Utensils, Camera, DollarSign } from 'lucide-react';
+import { ChevronLeft, Calendar, MapPin, Share2, Download, Map, ChevronDown, ChevronUp, Clock, Utensils, Camera, DollarSign, Loader2, AlertCircle, Phone, Star, Route, Image as ImageIcon } from 'lucide-react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { ImageWithFallback } from './figma/ImageWithFallback';
@@ -10,11 +10,13 @@ import { AttractionDetailCard } from './AttractionDetailCard';
 import { RestaurantDetailCard } from './RestaurantDetailCard';
 import { TransportDetailCard } from './TransportDetailCard';
 import { supabase } from '@/utils/supabase/client';
+import { tripService, type TripDetail } from '@/services/tripService';
+import { amapService } from '@/services/amapService';
 
 interface Activity {
   id: string;
   time: string;
-  type: 'attraction' | 'meal' | 'transport';
+  type: 'attraction' | 'meal' | 'transport' | 'rest';
   name: string;
   description?: string;
   duration?: string;
@@ -26,6 +28,26 @@ interface Activity {
   transportRouteId?: string;
   locationLat?: number;
   locationLng?: number;
+}
+
+interface EnhancedActivityDetail {
+  name: string;
+  description: string;
+  time: string;
+  type: string;
+  coordinates?: { lat: number; lng: number };
+  address?: string;
+  tel?: string;
+  rating?: string;
+  opentime?: string;
+  cost?: string;
+  photos?: string[];
+  route?: {
+    distance: string;
+    duration: string;
+    steps: Array<{ instruction: string }>;
+  };
+  dataSource: 'ai' | 'amap' | 'mixed';
 }
 
 interface DayItinerary {
@@ -49,6 +71,14 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
   const [restaurantDetail, setRestaurantDetail] = useState<any>(null);
   const [attractionDetail, setAttractionDetail] = useState<any>(null);
   const [transportDetail, setTransportDetail] = useState<any>(null);
+  const [enhancedActivities, setEnhancedActivities] = useState<Record<string, EnhancedActivityDetail>>({});
+  const [enhancedLoading, setEnhancedLoading] = useState<Record<string, boolean>>({});
+  const [enhancedErrors, setEnhancedErrors] = useState<Record<string, string>>({});
+
+  // Database state
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [dbTripData, setDbTripData] = useState<TripDetail | null>(null);
 
   // Mock data
   const tripData = {
@@ -185,6 +215,310 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
     },
   ];
 
+  // Load trip data from database
+  useEffect(() => {
+    const loadTripDetail = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        console.log('[TripDetailPage] Loading trip detail:', tripId);
+
+        const data = await tripService.getTripDetail(tripId);
+        setDbTripData(data);
+
+        console.log('[TripDetailPage] Trip detail loaded successfully:', {
+          tripId: data.id,
+          destination: data.destination,
+          itineraryCount: data.trip_itineraries?.length || 0,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : '加载行程失败';
+        console.error('[TripDetailPage] Failed to load trip:', message);
+        setError(message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadTripDetail();
+  }, [tripId]);
+
+  // Transform database data to component format
+  const actualTripData = dbTripData ? {
+    id: dbTripData.id,
+    destination: dbTripData.destination,
+    dates: `${dbTripData.start_date} - ${dbTripData.end_date}`,
+    duration: dbTripData.duration,
+    budget: dbTripData.budget,
+    coverImage: dbTripData.image_url || tripData.coverImage,
+  } : tripData;
+
+  const actualItinerary: DayItinerary[] = dbTripData ?
+    (dbTripData.trip_itineraries || [])
+      .sort((a, b) => a.day_number - b.day_number)
+      .map((itinerary) => ({
+        day: itinerary.day_number,
+        date: itinerary.date || '',
+        theme: itinerary.theme || '',
+        activities: (itinerary.activities || [])
+          .sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
+          .map((act) => ({
+            id: act.id,
+            time: act.time || '',
+            type: act.type === 'dining' ? 'meal' as const :
+                  act.type === 'sightseeing' ? 'attraction' as const :
+                  act.type === 'transportation' ? 'transport' as const :
+                  'attraction' as const,
+            name: act.name || '',
+            description: act.description || undefined,
+            duration: act.duration || undefined,
+            price: act.price || undefined,
+            image: act.image_url || undefined,
+            address: act.address || undefined,
+            locationLat: act.location_lat || undefined,
+            locationLng: act.location_lng || undefined,
+          })),
+      }))
+    : itinerary;
+
+  const extractCityFromDestination = (destination: string) => {
+    if (!destination) return '';
+    const parts = destination.split(/·|\.|,|，|\s+/).map(part => part.trim()).filter(Boolean);
+    return parts[0] || destination;
+  };
+
+  const formatDistance = (distance?: string) => {
+    const value = Number(distance || 0);
+    if (!Number.isFinite(value) || value <= 0) return '';
+    return value >= 1000 ? `${(value / 1000).toFixed(1)} km` : `${Math.round(value)} m`;
+  };
+
+  const formatDuration = (duration?: string) => {
+    const seconds = Number(duration || 0);
+    if (!Number.isFinite(seconds) || seconds <= 0) return '';
+    const minutes = Math.max(1, Math.round(seconds / 60));
+    const hours = Math.floor(minutes / 60);
+    const remain = minutes % 60;
+    return hours ? `${hours}小时${remain ? `${remain}分钟` : ''}` : `${minutes}分钟`;
+  };
+
+  const parsePoiLocation = (location?: string) => {
+    if (!location) return undefined;
+    const [lng, lat] = location.split(',');
+    const latNum = Number(lat);
+    const lngNum = Number(lng);
+    if (Number.isNaN(latNum) || Number.isNaN(lngNum)) return undefined;
+    return { lat: latNum, lng: lngNum };
+  };
+
+  const buildBaseDetail = (activity: Activity): EnhancedActivityDetail => ({
+    name: activity.name,
+    description: activity.description || '',
+    time: activity.time,
+    type: activity.type,
+    coordinates: activity.locationLat && activity.locationLng
+      ? { lat: activity.locationLat, lng: activity.locationLng }
+      : undefined,
+    address: activity.address,
+    cost: activity.price,
+    photos: activity.image ? [activity.image] : undefined,
+    dataSource: 'ai',
+  });
+
+  const findPoiForActivity = async (activity: Activity, city: string) => {
+    const keyword = activity.name;
+    const typeMap: Record<Activity['type'], string | undefined> = {
+      meal: '餐饮服务',
+      attraction: '风景名胜',
+      transport: undefined,
+      rest: '酒店',
+    };
+
+    if (activity.locationLat && activity.locationLng) {
+      const nearby = await amapService.searchNearby(activity.locationLat, activity.locationLng, keyword);
+      if (nearby && nearby.length > 0) {
+        return nearby[0];
+      }
+    }
+
+    const pois = await amapService.searchPOI(keyword, city, typeMap[activity.type]);
+    if (pois && pois.length > 0) {
+      return pois[0];
+    }
+
+    return null;
+  };
+
+  const parseRouteEndpoints = (text?: string) => {
+    if (!text) return null;
+    const parts = text.split(/→|->|—|－|至|到/).map((item) => item.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      return { from: parts[0], to: parts[1] };
+    }
+    return null;
+  };
+
+  const findPoiByName = async (name: string, city: string) => {
+    if (!name) return null;
+    const pois = await amapService.searchPOI(name, city);
+    if (pois && pois.length > 0) return pois[0];
+    const fallback = await amapService.searchPOI(name, '', undefined);
+    if (fallback && fallback.length > 0) return fallback[0];
+    return null;
+  };
+
+  const buildRouteDetailForTransport = async (activity: Activity, city: string) => {
+    const endpoints = parseRouteEndpoints(activity.name) || parseRouteEndpoints(activity.description);
+    let originLocation: string | null = null;
+    let destinationLocation: string | null = activity.locationLat && activity.locationLng
+      ? `${activity.locationLng},${activity.locationLat}`
+      : null;
+    let addressLabel = activity.address;
+
+    if (endpoints) {
+      const [fromPoi, toPoi] = await Promise.all([
+        findPoiByName(endpoints.from, city),
+        destinationLocation ? Promise.resolve(null) : findPoiByName(endpoints.to, city),
+      ]);
+
+      if (fromPoi?.location) {
+        originLocation = fromPoi.location;
+      }
+      if (!destinationLocation && toPoi?.location) {
+        destinationLocation = toPoi.location;
+      }
+      if (!addressLabel) {
+        addressLabel = `${endpoints.from} → ${endpoints.to}`;
+      }
+    }
+
+    if (!originLocation || !destinationLocation) {
+      return null;
+    }
+
+    const routeResult = await amapService.getRoute(originLocation, destinationLocation, 'walking');
+    if (!routeResult?.route?.paths?.length) {
+      return null;
+    }
+
+    const bestPath = routeResult.route.paths[0];
+    return {
+      address: addressLabel,
+      route: {
+        distance: formatDistance(bestPath.distance),
+        duration: formatDuration(bestPath.duration),
+        steps: (bestPath.steps || []).map((step) => ({
+          instruction: step.instruction,
+        })),
+      },
+    };
+  };
+
+  const enhanceActivityWithAmap = async (activity: Activity): Promise<EnhancedActivityDetail> => {
+    const baseDetail = buildBaseDetail(activity);
+    const city = extractCityFromDestination(actualTripData.destination);
+
+    try {
+      if (activity.type === 'transport') {
+        const routeDetail = await buildRouteDetailForTransport(activity, city);
+        if (routeDetail) {
+          return {
+            ...baseDetail,
+            address: routeDetail.address || baseDetail.address,
+            route: routeDetail.route,
+            dataSource: 'mixed',
+          };
+        }
+        return baseDetail;
+      }
+
+      const poi = await findPoiForActivity(activity, city);
+      if (!poi) {
+        return baseDetail;
+      }
+
+      const coords = parsePoiLocation(poi.location) || baseDetail.coordinates;
+      const photos = poi.photos?.map((p) => p.url).filter(Boolean) || [];
+
+      return {
+        ...baseDetail,
+        address: poi.address || baseDetail.address,
+        tel: poi.tel || baseDetail.tel,
+        rating: poi.rating || baseDetail.rating,
+        opentime: poi.opentime || baseDetail.opentime,
+        cost: poi.cost || baseDetail.cost,
+        photos: photos.length ? photos : baseDetail.photos,
+        coordinates: coords,
+        dataSource: 'mixed',
+      };
+    } catch (error) {
+      console.error('[TripDetailPage] Failed to enhance activity with Amap', {
+        activityId: activity.id,
+        activityName: activity.name,
+        error,
+      });
+      return baseDetail;
+    }
+  };
+
+  useEffect(() => {
+    const activities = actualItinerary.flatMap((day) => day.activities);
+    if (!activities.length) return;
+
+    let cancelled = false;
+
+    const baseMap = activities.reduce<Record<string, EnhancedActivityDetail>>((acc, act) => {
+      acc[act.id] = buildBaseDetail(act);
+      return acc;
+    }, {});
+
+    setEnhancedActivities((prev) => ({ ...baseMap, ...prev }));
+    setEnhancedErrors((prev) => {
+      const next = { ...prev };
+      activities.forEach((act) => {
+        if (next[act.id]) {
+          delete next[act.id];
+        }
+      });
+      return next;
+    });
+
+    const loadingMap = activities.reduce<Record<string, boolean>>((acc, act) => {
+      acc[act.id] = true;
+      return acc;
+    }, {});
+    setEnhancedLoading((prev) => ({ ...prev, ...loadingMap }));
+
+    const loadEnhanced = async () => {
+      for (const activity of activities) {
+        try {
+          const detail = await enhanceActivityWithAmap(activity);
+          if (cancelled) continue;
+          setEnhancedActivities((prev) => ({ ...prev, [activity.id]: detail }));
+          setEnhancedErrors((prev) => {
+            const next = { ...prev };
+            delete next[activity.id];
+            return next;
+          });
+        } catch (err) {
+          if (cancelled) continue;
+          console.error('[TripDetailPage] Amap enhancement failed', err);
+          setEnhancedActivities((prev) => ({ ...prev, [activity.id]: buildBaseDetail(activity) }));
+          setEnhancedErrors((prev) => ({ ...prev, [activity.id]: '高德数据暂不可用' }));
+        } finally {
+          if (cancelled) continue;
+          setEnhancedLoading((prev) => ({ ...prev, [activity.id]: false }));
+        }
+      }
+    };
+
+    loadEnhanced();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dbTripData, tripId]);
+
   const toggleDay = (day: number) => {
     setExpandedDays(prev => 
       prev.includes(day) 
@@ -204,6 +538,136 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
       default:
         return <Clock className="w-5 h-5 text-gray-500" />;
     }
+  };
+
+  const renderEnhancedActivity = (activity: Activity) => {
+    const detail = enhancedActivities[activity.id];
+    const isLoading = enhancedLoading[activity.id];
+    const error = enhancedErrors[activity.id];
+    const ratingValue = detail?.rating
+      ? Math.min(5, Math.max(0, Math.round(parseFloat(detail.rating) || 0)))
+      : 0;
+    const routeSteps = detail?.route?.steps || [];
+
+    if (!detail && !isLoading && !error) {
+      return null;
+    }
+
+    return (
+      <div className="mt-3 rounded-lg border border-gray-100 bg-white p-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className="bg-blue-50 text-blue-700">
+              高德增强
+            </Badge>
+            <span className="text-xs text-gray-500">
+              {detail?.dataSource === 'mixed' ? 'AI + 高德' : detail?.dataSource === 'amap' ? '高德数据' : 'AI数据'}
+            </span>
+          </div>
+          {isLoading && <Loader2 className="w-4 h-4 animate-spin text-red-500" />}
+        </div>
+
+        {error && (
+          <p className="mt-2 flex items-center gap-1 text-xs text-amber-600">
+            <AlertCircle className="w-4 h-4" />
+            {error}
+          </p>
+        )}
+
+        {detail && (
+          <div className="mt-3 space-y-3 text-sm text-gray-700">
+            {detail.address && (
+              <div className="flex items-start gap-2">
+                <MapPin className="w-4 h-4 text-gray-400 mt-0.5" />
+                <div>
+                  <div className="text-xs text-gray-500">地址</div>
+                  <div className="text-gray-800">{detail.address}</div>
+                </div>
+              </div>
+            )}
+
+            {detail.tel && (
+              <div className="flex items-center gap-2">
+                <Phone className="w-4 h-4 text-gray-400" />
+                <a href={`tel:${detail.tel}`} className="text-red-600 hover:underline">
+                  {detail.tel}
+                </a>
+              </div>
+            )}
+
+            {detail.rating && (
+              <div className="flex items-center gap-2">
+                <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
+                <div className="flex items-center gap-1">
+                  {[...Array(5)].map((_, idx) => (
+                    <Star
+                      key={idx}
+                      className={`w-3 h-3 ${idx < ratingValue ? 'text-amber-500 fill-amber-500' : 'text-gray-300'}`}
+                    />
+                  ))}
+                  <span className="ml-1 text-xs text-gray-500">{detail.rating}</span>
+                </div>
+              </div>
+            )}
+
+            {detail.opentime && (
+              <div className="flex items-start gap-2">
+                <Clock className="w-4 h-4 text-gray-400 mt-0.5" />
+                <div>
+                  <div className="text-xs text-gray-500">开放时间</div>
+                  <div className="text-gray-800">{detail.opentime}</div>
+                </div>
+              </div>
+            )}
+
+            {detail.cost && (
+              <div className="flex items-center gap-2">
+                <DollarSign className="w-4 h-4 text-gray-400" />
+                <span>{detail.cost}</span>
+              </div>
+            )}
+
+            {detail.photos && detail.photos.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <ImageIcon className="w-4 h-4" />
+                  <span>实景照片</span>
+                </div>
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  {detail.photos.slice(0, 6).map((photo, index) => (
+                    <ImageWithFallback
+                      key={index}
+                      src={photo}
+                      alt={`${detail.name}-${index + 1}`}
+                      className="h-20 w-full rounded-lg object-cover"
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {detail.route && (
+              <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                <div className="flex items-center gap-2 text-sm text-gray-800">
+                  <Route className="w-4 h-4 text-purple-500" />
+                  <span>{detail.route.distance || '步行路线'}{detail.route.duration ? ` · ${detail.route.duration}` : ''}</span>
+                </div>
+                {routeSteps.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {routeSteps.slice(0, 8).map((step, idx) => (
+                      <div key={idx} className="flex gap-2 text-xs text-gray-600">
+                        <span className="text-gray-400">{idx + 1}.</span>
+                        <span className="flex-1">{step.instruction}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
   };
 
   const handleExport = () => {
@@ -415,6 +879,39 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
     loadDetail();
   }, [selectedActivity]);
 
+  // Loading state
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 text-red-500 animate-spin mx-auto mb-4" />
+          <p className="text-gray-600">加载行程中...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="text-center max-w-md">
+          <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">加载失败</h2>
+          <p className="text-gray-600 mb-6">{error}</p>
+          <div className="flex gap-3 justify-center">
+            <Button variant="outline" onClick={onBack}>
+              返回
+            </Button>
+            <Button onClick={() => window.location.reload()}>
+              重试
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
       {/* Header */}
@@ -442,25 +939,25 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
       {/* Cover Image & Basic Info */}
       <div className="relative h-56">
         <ImageWithFallback
-          src={tripData.coverImage}
-          alt={tripData.destination}
+          src={actualTripData.coverImage}
+          alt={actualTripData.destination}
           className="w-full h-full object-cover"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent" />
         <div className="absolute bottom-0 left-0 right-0 p-6">
-          <h2 className="text-white mb-2">{tripData.destination}</h2>
+          <h2 className="text-white mb-2">{actualTripData.destination}</h2>
           <div className="flex items-center gap-4 text-white/90 text-sm">
             <div className="flex items-center gap-1">
               <Calendar className="w-4 h-4" />
-              {tripData.dates}
+              {actualTripData.dates}
             </div>
             <div className="flex items-center gap-1">
               <Clock className="w-4 h-4" />
-              {tripData.duration}
+              {actualTripData.duration}
             </div>
             <div className="flex items-center gap-1">
               <DollarSign className="w-4 h-4" />
-              {tripData.budget}
+              {actualTripData.budget}
             </div>
           </div>
         </div>
@@ -486,7 +983,7 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
           </TabsList>
 
           <TabsContent value="itinerary" className="space-y-3">
-            {itinerary.map((day) => (
+            {actualItinerary.map((day) => (
               <Card key={day.day} className="overflow-hidden">
                 <button
                   onClick={() => toggleDay(day.day)}
@@ -567,6 +1064,8 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
                                 className="w-full h-32 object-cover rounded-lg"
                               />
                             )}
+
+                            {renderEnhancedActivity(activity)}
                           </div>
                         </div>
                       </div>
@@ -617,7 +1116,7 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
                 </div>
                 <div className="flex items-center justify-between pt-3 border-t-2 border-gray-200">
                   <span className="text-gray-900">总计</span>
-                  <span className="text-red-500">{tripData.budget}</span>
+                  <span className="text-red-500">{actualTripData.budget}</span>
                 </div>
               </div>
             </Card>
@@ -639,12 +1138,12 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
       {showShareModal && (
         <ShareTripModal
           trip={{
-            id: tripData.id,
-            destination: tripData.destination,
+            id: actualTripData.id,
+            destination: actualTripData.destination,
             startDate: '2024-10-01',
             endDate: '2024-10-07',
-            budget: tripData.budget,
-            image: tripData.coverImage,
+            budget: actualTripData.budget,
+            image: actualTripData.coverImage,
             days: 7,
             highlights: [
               'Visit iconic landmarks',

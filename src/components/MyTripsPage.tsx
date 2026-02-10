@@ -21,7 +21,11 @@ interface Trip {
 
 type ViewMode = 'list' | 'detail' | 'map';
 
-export function MyTripsPage() {
+interface MyTripsPageProps {
+  onNavigateToPlanner?: () => void;
+}
+
+export function MyTripsPage({ onNavigateToPlanner }: MyTripsPageProps = {}) {
   const { currentUser, loading: authLoading } = useAuth();
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
@@ -39,6 +43,21 @@ export function MyTripsPage() {
       setLoading(false);
     }
   }, [currentUser, authLoading]);
+
+  // 页面可见时自动刷新列表（从AI规划页返回时）
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && currentUser && viewMode === 'list') {
+        console.log('[MyTripsPage] 页面重新可见，刷新行程列表');
+        loadTrips();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [currentUser, viewMode]);
 
   const loadTrips = async () => {
     try {
@@ -97,7 +116,12 @@ export function MyTripsPage() {
   };
 
   const handleCreateTrip = () => {
-    alert('创建新行程功能将在后续任务中实现');
+    console.log('[MyTripsPage] 导航到 AI 规划页面');
+    if (onNavigateToPlanner) {
+      onNavigateToPlanner();
+    } else {
+      alert('导航功能未配置');
+    }
   };
 
   const getStatusBadge = (status: string) => {
