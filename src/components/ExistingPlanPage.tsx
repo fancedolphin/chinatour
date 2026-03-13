@@ -7,9 +7,10 @@ import { AIPlannerChatPage } from './AIPlannerChatPage';
 
 interface ExistingPlanPageProps {
   onBack: () => void;
+  onSaveSuccess?: () => void;
 }
 
-export function ExistingPlanPage({ onBack }: ExistingPlanPageProps) {
+export function ExistingPlanPage({ onBack, onSaveSuccess }: ExistingPlanPageProps) {
   const [planText, setPlanText] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showChat, setShowChat] = useState(false);
@@ -26,7 +27,7 @@ export function ExistingPlanPage({ onBack }: ExistingPlanPageProps) {
   };
 
   if (showChat) {
-    return <AIPlannerChatPage onBack={() => setShowChat(false)} initialPlan={planText} />;
+    return <AIPlannerChatPage onBack={() => setShowChat(false)} initialPlan={planText} onSaveSuccess={onSaveSuccess} />;
   }
 
   return (

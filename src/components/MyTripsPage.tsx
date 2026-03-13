@@ -6,7 +6,7 @@ import { Badge } from './ui/badge';
 import { TripDetailPage } from './TripDetailPage';
 import { TripMapPage } from './TripMapPage';
 import { ShareTripModal } from './ShareTripModal';
-import { useAuth } from '@/presentation/hooks/useAuth';
+import { useAuthContext } from '@/presentation/context/AuthContext';
 import { tripService, type Trip as DBTrip } from '@/services/tripService';
 
 interface Trip {
@@ -26,7 +26,7 @@ interface MyTripsPageProps {
 }
 
 export function MyTripsPage({ onNavigateToPlanner }: MyTripsPageProps = {}) {
-  const { currentUser, loading: authLoading } = useAuth();
+  const { currentUser, loading: authLoading } = useAuthContext();
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
   const [shareTrip, setShareTrip] = useState<Trip | null>(null);

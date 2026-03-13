@@ -84,7 +84,7 @@ function AppContent() {
     // 其他页面
     switch (currentTab) {
       case 'planner':
-        return <PlanInputPage />;
+        return <PlanInputPage onNavigateToTrips={() => setCurrentTab('trips')} />;
       case 'trips':
         return <MyTripsPage onNavigateToPlanner={() => setCurrentTab('planner')} />;
       case 'tips':

@@ -5,15 +5,19 @@ import { GuidedQuestionPage } from './GuidedQuestionPage';
 import { ExistingPlanPage } from './ExistingPlanPage';
 import { EmergencyAssistantCard } from './EmergencyAssistantCard';
 
-export function PlanInputPage() {
+interface PlanInputPageProps {
+  onNavigateToTrips?: () => void;
+}
+
+export function PlanInputPage({ onNavigateToTrips }: PlanInputPageProps = {}) {
   const [selectedMode, setSelectedMode] = useState<'new' | 'existing' | null>(null);
 
   if (selectedMode === 'new') {
-    return <GuidedQuestionPage onBack={() => setSelectedMode(null)} />;
+    return <GuidedQuestionPage onBack={() => setSelectedMode(null)} onSaveSuccess={onNavigateToTrips} />;
   }
 
   if (selectedMode === 'existing') {
-    return <ExistingPlanPage onBack={() => setSelectedMode(null)} />;
+    return <ExistingPlanPage onBack={() => setSelectedMode(null)} onSaveSuccess={onNavigateToTrips} />;
   }
 
   return (
