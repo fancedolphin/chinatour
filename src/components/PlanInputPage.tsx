@@ -1,16 +1,83 @@
-import { FileText, Sparkles, ChevronRight, ChevronDown } from 'lucide-react';
-import { useState } from 'react';
+import { FileText, Sparkles, ChevronRight, ChevronDown, Loader2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { GuidedQuestionPage } from './GuidedQuestionPage';
 import { ExistingPlanPage } from './ExistingPlanPage';
 import { EmergencyAssistantCard } from './EmergencyAssistantCard';
+import { AIPlannerChatPage } from './AIPlannerChatPage';
+import { tripService, type TripDetail } from '@/services/tripService';
+
+function buildResumePrompt(trip: TripDetail): string {
+  const days = [...trip.trip_itineraries]
+    .sort((a, b) => a.day_number - b.day_number)
+    .map(it => {
+      const acts = [...it.activities]
+        .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+        .map(a => `  ${a.time ?? ''} ${a.name}：${a.description ?? ''}`)
+        .join('\n');
+      return `第${it.day_number}天（${it.theme ?? ''}）\n${acts}`;
+    })
+    .join('\n\n');
+  return `以下是我已保存的行程，请基于此继续为我规划和优化：\n\n目的地：${trip.destination}\n日期：${trip.start_date} 至 ${trip.end_date}\n预算：${trip.budget ?? '未设置'}\n\n${days}\n\n请确认收到行程内容，并生成完整的行程JSON，随时为我调整优化。`;
+}
 
 interface PlanInputPageProps {
   onNavigateToTrips?: () => void;
+  resumeTripId?: string;
+  onClearResume?: () => void;
 }
 
-export function PlanInputPage({ onNavigateToTrips }: PlanInputPageProps = {}) {
+export function PlanInputPage({ onNavigateToTrips, resumeTripId, onClearResume }: PlanInputPageProps = {}) {
   const [selectedMode, setSelectedMode] = useState<'new' | 'existing' | null>(null);
+  const [resumeInitialPlan, setResumeInitialPlan] = useState<string | null>(null);
+  const [resumeLoading, setResumeLoading] = useState(false);
+
+  useEffect(() => {
+    if (!resumeTripId) {
+      setResumeInitialPlan(null);
+      return;
+    }
+    let cancelled = false;
+    setResumeLoading(true);
+    tripService.getTripDetail(resumeTripId)
+      .then(trip => {
+        if (!cancelled) setResumeInitialPlan(buildResumePrompt(trip));
+      })
+      .catch(err => {
+        console.error('[PlanInputPage] 加载行程失败:', err);
+        if (!cancelled) onClearResume?.();
+      })
+      .finally(() => {
+        if (!cancelled) setResumeLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [resumeTripId]);
+
+  if (resumeTripId) {
+    if (resumeLoading) {
+      return (
+        <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+          <div className="text-center">
+            <Loader2 className="w-12 h-12 text-red-500 mx-auto mb-4 animate-spin" />
+            <p className="text-gray-600">加载行程中...</p>
+          </div>
+        </div>
+      );
+    }
+    if (resumeInitialPlan) {
+      return (
+        <AIPlannerChatPage
+          onBack={() => {
+            onClearResume?.();
+            setSelectedMode(null);
+            setResumeInitialPlan(null);
+          }}
+          initialPlan={resumeInitialPlan}
+          onSaveSuccess={onNavigateToTrips}
+        />
+      );
+    }
+  }
 
   if (selectedMode === 'new') {
     return <GuidedQuestionPage onBack={() => setSelectedMode(null)} onSaveSuccess={onNavigateToTrips} />;

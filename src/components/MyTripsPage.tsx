@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Calendar, MapPin, Clock, ChevronRight, Share2, Trash2, Loader2 } from 'lucide-react';
+import { Plus, Calendar, MapPin, Clock, ChevronRight, Share2, Trash2, Loader2, MessageSquare } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -23,9 +23,10 @@ type ViewMode = 'list' | 'detail' | 'map';
 
 interface MyTripsPageProps {
   onNavigateToPlanner?: () => void;
+  onContinueChat?: (tripId: string) => void;
 }
 
-export function MyTripsPage({ onNavigateToPlanner }: MyTripsPageProps = {}) {
+export function MyTripsPage({ onNavigateToPlanner, onContinueChat }: MyTripsPageProps = {}) {
   const { currentUser, loading: authLoading } = useAuthContext();
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
@@ -279,6 +280,17 @@ export function MyTripsPage({ onNavigateToPlanner }: MyTripsPageProps = {}) {
                     ) : (
                       <Trash2 className="w-4 h-4 text-red-500" />
                     )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onContinueChat?.(trip.id);
+                    }}
+                    title="继续与AI对话"
+                  >
+                    <MessageSquare className="w-4 h-4 text-blue-500" />
                   </Button>
                   <Button
                     variant="outline"

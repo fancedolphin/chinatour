@@ -31,6 +31,7 @@ interface UserProfile {
 function AppContent() {
   const [currentTab, setCurrentTab] = useState('planner');
   const [showLogin, setShowLogin] = useState(false);
+  const [resumeTripId, setResumeTripId] = useState<string | null>(null);
   
   // 使用新的DDD架构Context
   const { currentUser, isAuthenticated, logout } = useAuthContext();
@@ -84,9 +85,23 @@ function AppContent() {
     // 其他页面
     switch (currentTab) {
       case 'planner':
-        return <PlanInputPage onNavigateToTrips={() => setCurrentTab('trips')} />;
+        return (
+          <PlanInputPage
+            onNavigateToTrips={() => setCurrentTab('trips')}
+            resumeTripId={resumeTripId ?? undefined}
+            onClearResume={() => setResumeTripId(null)}
+          />
+        );
       case 'trips':
-        return <MyTripsPage onNavigateToPlanner={() => setCurrentTab('planner')} />;
+        return (
+          <MyTripsPage
+            onNavigateToPlanner={() => setCurrentTab('planner')}
+            onContinueChat={(tripId) => {
+              setResumeTripId(tripId);
+              setCurrentTab('planner');
+            }}
+          />
+        );
       case 'tips':
         return <TravelTipsPage />;
       case 'discover':
