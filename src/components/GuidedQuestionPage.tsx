@@ -12,9 +12,10 @@ import { chineseCities, searchCities } from '../data/cities';
 interface GuidedQuestionPageProps {
   onBack: () => void;
   onSaveSuccess?: () => void;
+  onOpenMap?: (tripId: string) => void;
 }
 
-export function GuidedQuestionPage({ onBack, onSaveSuccess }: GuidedQuestionPageProps) {
+export function GuidedQuestionPage({ onBack, onSaveSuccess, onOpenMap }: GuidedQuestionPageProps) {
   const [currentStep, setCurrentStep] = useState(1);
   const totalSteps = 4;
   const [showChat, setShowChat] = useState(false);
@@ -97,7 +98,14 @@ ${formData.accessibility ? '- 需要无障碍设施' : ''}
   };
 
   if (showChat) {
-    return <AIPlannerChatPage onBack={() => setShowChat(false)} initialPlan={generateInitialPrompt()} onSaveSuccess={onSaveSuccess} />;
+    return (
+      <AIPlannerChatPage
+        onBack={() => setShowChat(false)}
+        initialPlan={generateInitialPrompt()}
+        onSaveSuccess={onSaveSuccess}
+        onOpenMap={onOpenMap}
+      />
+    );
   }
 
   const renderStep = () => {

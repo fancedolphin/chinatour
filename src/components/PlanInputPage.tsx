@@ -25,9 +25,10 @@ interface PlanInputPageProps {
   onNavigateToTrips?: () => void;
   resumeTripId?: string;
   onClearResume?: () => void;
+  onOpenMap?: (tripId: string) => void;
 }
 
-export function PlanInputPage({ onNavigateToTrips, resumeTripId, onClearResume }: PlanInputPageProps = {}) {
+export function PlanInputPage({ onNavigateToTrips, resumeTripId, onClearResume, onOpenMap }: PlanInputPageProps = {}) {
   const [selectedMode, setSelectedMode] = useState<'new' | 'existing' | null>(null);
   const [resumeInitialPlan, setResumeInitialPlan] = useState<string | null>(null);
   const [resumeLoading, setResumeLoading] = useState(false);
@@ -74,17 +75,18 @@ export function PlanInputPage({ onNavigateToTrips, resumeTripId, onClearResume }
           }}
           initialPlan={resumeInitialPlan}
           onSaveSuccess={onNavigateToTrips}
+          onOpenMap={onOpenMap}
         />
       );
     }
   }
 
   if (selectedMode === 'new') {
-    return <GuidedQuestionPage onBack={() => setSelectedMode(null)} onSaveSuccess={onNavigateToTrips} />;
+    return <GuidedQuestionPage onBack={() => setSelectedMode(null)} onSaveSuccess={onNavigateToTrips} onOpenMap={onOpenMap} />;
   }
 
   if (selectedMode === 'existing') {
-    return <ExistingPlanPage onBack={() => setSelectedMode(null)} onSaveSuccess={onNavigateToTrips} />;
+    return <ExistingPlanPage onBack={() => setSelectedMode(null)} onSaveSuccess={onNavigateToTrips} onOpenMap={onOpenMap} />;
   }
 
   return (

@@ -72,10 +72,38 @@ export function getFallbackData(activity: any): any {
   };
 }
 
-const AMAP_API_KEY = import.meta.env.VITE_AMAP_API_KEY as string;
-const AMAP_BASE_URL = 'https://restapi.amap.com/v3/';
+type AMapStatus = 'complete' | 'error' | 'no_data';
+
+type AMapPluginName = 'AMap.PlaceSearch' | 'AMap.Walking' | 'AMap.Driving' | 'AMap.Transfer';
+
+type AMapServicePlugin = {
+  search: (...args: unknown[]) => void;
+  searchNearBy?: (keyword: string, center: [number, number], radius: number, callback: (status: AMapStatus, result: any) => void) => void;
+  getDetails?: (id: string, callback: (status: AMapStatus, result: any) => void) => void;
+};
+
+type AMapGlobal = {
+  plugin: (plugins: AMapPluginName | AMapPluginName[], callback: () => void) => void;
+  PlaceSearch: new (options?: Record<string, unknown>) => AMapServicePlugin;
+  Walking: new (options?: Record<string, unknown>) => AMapServicePlugin;
+  Driving: new (options?: Record<string, unknown>) => AMapServicePlugin;
+  Transfer: new (options?: Record<string, unknown>) => AMapServicePlugin;
+};
+
+declare global {
+  interface Window {
+    AMap?: AMapGlobal;
+    _AMapSecurityConfig?: {
+      securityJsCode: string;
+    };
+  }
+}
+
+const AMAP_API_KEY = import.meta.env.VITE_AMAP_API_KEY || '74532255ab3d624097f260fe675838f0';
+const AMAP_SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE || 'f00fa54b50d07f4fd29779d1bb8d44ef';
 const CACHE_PREFIX = 'amap_poi_';
 const CACHE_TTL = 86_400_000;
+let amapScriptPromise: Promise<AMapGlobal> | null = null;
 
 type CacheEntry = {
   data: AmapPOI;
@@ -84,64 +112,100 @@ type CacheEntry = {
 
 class AmapService implements AmapServiceInterface {
   async searchPOI(keyword: string, city: string, type?: string): Promise<AmapPOI[]> {
-    const result = await this.fetchFromAmap<AmapSearchResult>('place/text', {
-      keywords: keyword,
-      city,
-      types: type,
-      citylimit: 'true',
+    const AMap = await this.loadPlugin('AMap.PlaceSearch');
+
+    return new Promise((resolve) => {
+      const placeSearch = new AMap.PlaceSearch({
+        city: city || undefined,
+        type,
+        citylimit: Boolean(city),
+        extensions: 'all',
+        pageSize: 10,
+      });
+
+      placeSearch.search(keyword, (_status: AMapStatus, result: any) => {
+        const pois = this.normalizePois(result?.poiList?.pois ?? []);
+        this.cachePois(pois);
+        resolve(pois);
+      });
     });
-
-    if (!result || result.status !== '1' || result.count === '0') {
-      return [];
-    }
-
-    this.cachePois(result.pois);
-    return result.pois;
   }
 
   async searchNearby(lat: number, lng: number, keyword: string, radius = 1000): Promise<AmapPOI[]> {
-    const result = await this.fetchFromAmap<AmapSearchResult>('place/around', {
-      location: `${lng},${lat}`,
-      keywords: keyword,
-      radius,
-      sortrule: 'distance',
+    const AMap = await this.loadPlugin('AMap.PlaceSearch');
+
+    return new Promise((resolve) => {
+      const placeSearch = new AMap.PlaceSearch({
+        extensions: 'all',
+        pageSize: 10,
+      });
+
+      placeSearch.searchNearBy?.(keyword, [lng, lat], radius, (_status: AMapStatus, result: any) => {
+        const pois = this.normalizePois(result?.poiList?.pois ?? []);
+        this.cachePois(pois);
+        resolve(pois);
+      });
     });
-
-    if (!result || result.status !== '1' || result.count === '0') {
-      return [];
-    }
-
-    this.cachePois(result.pois);
-    return result.pois;
   }
 
   async getPOIDetail(poiId: string): Promise<AmapPOI | null> {
-    const result = await this.fetchFromAmap<AmapSearchResult>('place/detail', {
-      id: poiId,
-      extensions: 'all',
+    const AMap = await this.loadPlugin('AMap.PlaceSearch');
+
+    return new Promise((resolve) => {
+      const placeSearch = new AMap.PlaceSearch({
+        extensions: 'all',
+      });
+
+      placeSearch.getDetails?.(poiId, (_status: AMapStatus, result: any) => {
+        const poi = this.normalizePois(result?.poiList?.pois ?? [])[0] ?? null;
+        if (poi) {
+          this.cachePois([poi]);
+        }
+        resolve(poi);
+      });
     });
-
-    if (!result || result.status !== '1' || !result.pois || result.pois.length === 0) {
-      return null;
-    }
-
-    const poi = result.pois[0];
-    this.cachePois([poi]);
-    return poi;
   }
 
   async getRoute(origin: string, destination: string, mode: 'walking' | 'driving' | 'transit'): Promise<AmapRouteResult | null> {
-    const endpoint = mode === 'transit' ? 'direction/transit/integrated' : `direction/${mode}`;
-    const result = await this.fetchFromAmap<AmapRouteResult>(endpoint, {
-      origin,
-      destination,
-    });
-
-    if (!result || result.status !== '1') {
+    if (mode === 'transit') {
       return null;
     }
 
-    return result;
+    const pluginName: AMapPluginName = mode === 'walking' ? 'AMap.Walking' : 'AMap.Driving';
+    const AMap = await this.loadPlugin(pluginName);
+    const RoutePlugin = mode === 'walking' ? AMap.Walking : AMap.Driving;
+    const start = this.parseCoordinate(origin);
+    const end = this.parseCoordinate(destination);
+
+    if (!start || !end) {
+      return null;
+    }
+
+    return new Promise((resolve) => {
+      const routeService = new RoutePlugin();
+      routeService.search(start, end, (status: AMapStatus, result: any) => {
+        if (status !== 'complete') {
+          resolve(null);
+          return;
+        }
+
+        const paths = result?.routes ?? result?.route?.paths ?? [];
+        resolve({
+          status: '1',
+          route: {
+            paths: paths.map((path: any) => ({
+              distance: String(path.distance ?? ''),
+              duration: String(path.time ?? path.duration ?? ''),
+              steps: (path.steps ?? []).map((step: any) => ({
+                instruction: String(step.instruction ?? ''),
+                distance: String(step.distance ?? ''),
+                duration: String(step.time ?? step.duration ?? ''),
+              })),
+            })),
+          },
+        });
+      });
+    });
   }
 
   getCachedPOI(key: string): AmapPOI | null {
@@ -179,48 +243,124 @@ class AmapService implements AmapServiceInterface {
     }
   }
 
-  private buildUrl(path: string, params: Record<string, string | number | undefined>): string {
-    const url = new URL(path, AMAP_BASE_URL);
-    const searchParams = new URLSearchParams({ key: AMAP_API_KEY });
+  private async loadPlugin(plugin: AMapPluginName): Promise<AMapGlobal> {
+    const AMap = await this.ensureAmapLoaded();
 
-    Object.entries(params).forEach(([key, value]) => {
-      if (value === undefined) return;
-      searchParams.set(key, String(value));
+    await new Promise<void>((resolve) => {
+      AMap.plugin(plugin, () => resolve());
     });
 
-    url.search = searchParams.toString();
-    return url.toString();
+    return AMap;
   }
 
-  private async fetchFromAmap<T>(
-    path: string,
-    params: Record<string, string | number | undefined>,
-    retries = 1,
-  ): Promise<T | null> {
-    const url = this.buildUrl(path, params);
+  private async ensureAmapLoaded(): Promise<AMapGlobal> {
+    if (window.AMap) {
+      return window.AMap;
+    }
 
-    try {
-      const response = await fetch(url);
-      const data = await response.json();
+    if (!amapScriptPromise) {
+      amapScriptPromise = new Promise<AMapGlobal>((resolve, reject) => {
+        window._AMapSecurityConfig = {
+          securityJsCode: AMAP_SECURITY_CODE,
+        };
 
-      if (!response.ok || data.status !== '1') {
-        const errorType = classifyError({ response: { status: response.status, data } });
-        if (shouldRetry(errorType) && retries > 0) {
-          return this.fetchFromAmap<T>(path, params, retries - 1);
+        const existing = document.querySelector<HTMLScriptElement>('script[data-amap-service-sdk="true"]');
+        if (existing) {
+          existing.addEventListener('load', () => {
+            if (window.AMap) {
+              resolve(window.AMap);
+            } else {
+              reject(new Error('AMap 未注入到 window'));
+            }
+          }, { once: true });
+          existing.addEventListener('error', () => reject(new Error('地图脚本加载失败')), { once: true });
+          return;
         }
-        console.error(`[AmapService] Request failed: ${errorType}`, data);
-        return null;
-      }
 
-      return data as T;
-    } catch (error) {
-      const errorType = classifyError(error);
-      if (shouldRetry(errorType) && retries > 0) {
-        return this.fetchFromAmap<T>(path, params, retries - 1);
-      }
-      console.error(`[AmapService] Request error: ${errorType}`, error);
+        const script = document.createElement('script');
+        script.dataset.amapServiceSdk = 'true';
+        script.async = true;
+        script.src = `https://webapi.amap.com/maps?v=2.0&key=${AMAP_API_KEY}`;
+        script.onload = () => {
+          if (window.AMap) {
+            resolve(window.AMap);
+          } else {
+            amapScriptPromise = null;
+            reject(new Error('AMap 未注入到 window'));
+          }
+        };
+        script.onerror = () => {
+          amapScriptPromise = null;
+          reject(new Error('地图脚本加载失败'));
+        };
+        document.head.appendChild(script);
+      });
+    }
+
+    return amapScriptPromise;
+  }
+
+  private normalizePois(pois: any[]): AmapPOI[] {
+    return pois
+      .map((poi) => {
+        const location = this.normalizeLocation(poi.location);
+        if (!location || !poi.name) {
+          return null;
+        }
+
+        return {
+          id: String(poi.id ?? ''),
+          name: String(poi.name),
+          type: String(poi.type ?? ''),
+          address: String(poi.address ?? poi.pname ?? ''),
+          location,
+          tel: poi.tel ? String(poi.tel) : undefined,
+          rating: poi.biz_ext?.rating ? String(poi.biz_ext.rating) : undefined,
+          cost: poi.biz_ext?.cost ? String(poi.biz_ext.cost) : undefined,
+          opentime: poi.businessHours ? String(poi.businessHours) : poi.opentime ? String(poi.opentime) : undefined,
+          photos: Array.isArray(poi.photos)
+            ? poi.photos
+                .map((photo: any) => {
+                  const url = typeof photo === 'string' ? photo : photo?.url;
+                  return url ? { url: String(url) } : null;
+                })
+                .filter(Boolean) as Array<{ url: string }>
+            : undefined,
+        };
+      })
+      .filter((poi): poi is AmapPOI => Boolean(poi));
+  }
+
+  private normalizeLocation(location: any): string | null {
+    if (!location) {
       return null;
     }
+
+    if (typeof location === 'string') {
+      return location;
+    }
+
+    if (typeof location.lng === 'number' && typeof location.lat === 'number') {
+      return `${location.lng},${location.lat}`;
+    }
+
+    if (typeof location.getLng === 'function' && typeof location.getLat === 'function') {
+      return `${location.getLng()},${location.getLat()}`;
+    }
+
+    return null;
+  }
+
+  private parseCoordinate(value: string): [number, number] | null {
+    const [lngStr, latStr] = value.split(',');
+    const lng = Number.parseFloat(lngStr);
+    const lat = Number.parseFloat(latStr);
+
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+      return null;
+    }
+
+    return [lng, lat];
   }
 
   private cachePois(pois: AmapPOI[]): void {

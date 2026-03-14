@@ -189,6 +189,94 @@ export type Database = {
         }
         Relationships: []
       }
+      location_articles: {
+        Row: {
+          author_avatar: string | null
+          author_name: string | null
+          cover: string | null
+          created_at: string
+          id: string
+          likes: number
+          location_id: string
+          title: string
+          url: string | null
+        }
+        Insert: {
+          author_avatar?: string | null
+          author_name?: string | null
+          cover?: string | null
+          created_at?: string
+          id?: string
+          likes?: number
+          location_id: string
+          title: string
+          url?: string | null
+        }
+        Update: {
+          author_avatar?: string | null
+          author_name?: string | null
+          cover?: string | null
+          created_at?: string
+          id?: string
+          likes?: number
+          location_id?: string
+          title?: string
+          url?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "location_articles_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "trip_map_locations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      location_videos: {
+        Row: {
+          author_avatar: string | null
+          author_name: string | null
+          created_at: string
+          date: string | null
+          id: string
+          location_id: string
+          platform: Database["public"]["Enums"]["video_platform"]
+          thumbnail: string | null
+          title: string | null
+        }
+        Insert: {
+          author_avatar?: string | null
+          author_name?: string | null
+          created_at?: string
+          date?: string | null
+          id?: string
+          location_id: string
+          platform?: Database["public"]["Enums"]["video_platform"]
+          thumbnail?: string | null
+          title?: string | null
+        }
+        Update: {
+          author_avatar?: string | null
+          author_name?: string | null
+          created_at?: string
+          date?: string | null
+          id?: string
+          location_id?: string
+          platform?: Database["public"]["Enums"]["video_platform"]
+          thumbnail?: string | null
+          title?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "location_videos_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "trip_map_locations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       restaurants: {
         Row: {
           address: string | null
@@ -514,6 +602,56 @@ export type Database = {
           },
         ]
       }
+      trip_map_locations: {
+        Row: {
+          address: string | null
+          city: string
+          created_at: string
+          district: string | null
+          id: string
+          lat: number
+          lng: number
+          name: string
+          order_index: number
+          trip_id: string
+          type: Database["public"]["Enums"]["map_location_type"]
+        }
+        Insert: {
+          address?: string | null
+          city: string
+          created_at?: string
+          district?: string | null
+          id?: string
+          lat: number
+          lng: number
+          name: string
+          order_index?: number
+          trip_id: string
+          type?: Database["public"]["Enums"]["map_location_type"]
+        }
+        Update: {
+          address?: string | null
+          city?: string
+          created_at?: string
+          district?: string | null
+          id?: string
+          lat?: number
+          lng?: number
+          name?: string
+          order_index?: number
+          trip_id?: string
+          type?: Database["public"]["Enums"]["map_location_type"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "trip_map_locations_trip_id_fkey"
+            columns: ["trip_id"]
+            isOneToOne: false
+            referencedRelation: "trips"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       trips: {
         Row: {
           ai_generated_at: string | null
@@ -786,7 +924,8 @@ export type Database = {
       }
     }
     Enums: {
-      [_ in never]: never
+      map_location_type: "restaurant" | "attraction" | "hotel"
+      video_platform: "douyin" | "xiaohongshu"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -913,6 +1052,9 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      map_location_type: ["restaurant", "attraction", "hotel"],
+      video_platform: ["douyin", "xiaohongshu"],
+    },
   },
 } as const

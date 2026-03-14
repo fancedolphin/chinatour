@@ -8,9 +8,10 @@ import { AIPlannerChatPage } from './AIPlannerChatPage';
 interface ExistingPlanPageProps {
   onBack: () => void;
   onSaveSuccess?: () => void;
+  onOpenMap?: (tripId: string) => void;
 }
 
-export function ExistingPlanPage({ onBack, onSaveSuccess }: ExistingPlanPageProps) {
+export function ExistingPlanPage({ onBack, onSaveSuccess, onOpenMap }: ExistingPlanPageProps) {
   const [planText, setPlanText] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showChat, setShowChat] = useState(false);
@@ -27,7 +28,14 @@ export function ExistingPlanPage({ onBack, onSaveSuccess }: ExistingPlanPageProp
   };
 
   if (showChat) {
-    return <AIPlannerChatPage onBack={() => setShowChat(false)} initialPlan={planText} onSaveSuccess={onSaveSuccess} />;
+    return (
+      <AIPlannerChatPage
+        onBack={() => setShowChat(false)}
+        initialPlan={planText}
+        onSaveSuccess={onSaveSuccess}
+        onOpenMap={onOpenMap}
+      />
+    );
   }
 
   return (

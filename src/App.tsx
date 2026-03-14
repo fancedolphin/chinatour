@@ -32,6 +32,7 @@ function AppContent() {
   const [currentTab, setCurrentTab] = useState('planner');
   const [showLogin, setShowLogin] = useState(false);
   const [resumeTripId, setResumeTripId] = useState<string | null>(null);
+  const [tripMapTripId, setTripMapTripId] = useState<string | null>(null);
   
   // 使用新的DDD架构Context
   const { currentUser, isAuthenticated, logout } = useAuthContext();
@@ -90,6 +91,10 @@ function AppContent() {
             onNavigateToTrips={() => setCurrentTab('trips')}
             resumeTripId={resumeTripId ?? undefined}
             onClearResume={() => setResumeTripId(null)}
+            onOpenMap={(tripId) => {
+              setTripMapTripId(tripId);
+              setCurrentTab('trips');
+            }}
           />
         );
       case 'trips':
@@ -100,6 +105,8 @@ function AppContent() {
               setResumeTripId(tripId);
               setCurrentTab('planner');
             }}
+            openMapTripId={tripMapTripId ?? undefined}
+            onOpenMapHandled={() => setTripMapTripId(null)}
           />
         );
       case 'tips':

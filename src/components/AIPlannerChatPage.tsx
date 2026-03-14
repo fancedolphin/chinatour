@@ -53,9 +53,10 @@ interface AIPlannerChatPageProps {
   onBack: () => void;
   initialPlan?: string;
   onSaveSuccess?: () => void;
+  onOpenMap?: (tripId: string) => void;
 }
 
-export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess }: AIPlannerChatPageProps) {
+export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMap }: AIPlannerChatPageProps) {
   const { currentUser } = useAuthContext();
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
@@ -66,6 +67,7 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess }: AIPlan
   const chatHistoryRef = useRef<ChatHistory>([]);
   const [expandedDays, setExpandedDays] = useState<number[]>([1]);
   const [isSaving, setIsSaving] = useState(false);
+  const [savedTripId, setSavedTripId] = useState<string | null>(null);
   
   // Detail card states
   const [selectedRestaurant, setSelectedRestaurant] = useState<any>(null);
@@ -177,7 +179,7 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess }: AIPlan
         };
       });
 
-      await tripService.createTripWithItineraries({
+      const savedTrip = await tripService.createTripWithItineraries({
         trip: {
           user_id: currentUser.id,
           destination: currentPlan.destination,
@@ -192,8 +194,12 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess }: AIPlan
         itineraries,
       });
 
-      toast.success('行程已保存！');
-      onSaveSuccess?.();
+      setSavedTripId(savedTrip.id);
+      toast.success('行程已保存，可直接查看地图');
+
+      if (!onOpenMap) {
+        onSaveSuccess?.();
+      }
     } catch (err) {
       toast.error('保存失败：' + (err instanceof Error ? err.message : '未知错误'));
     } finally {
@@ -525,10 +531,22 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess }: AIPlan
               </div>
             </div>
 
-            {/* Action Buttons - Fixed at Bottom */}
+                {/* Action Buttons - Fixed at Bottom */}
             <div className="p-4 pb-20 border-t border-gray-200 bg-white shrink-0">
               <div className="flex gap-2">
-                <Button variant="outline" className="flex-1" size="sm">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  size="sm"
+                  onClick={() => {
+                    if (!savedTripId) {
+                      toast.info('请先保存行程再查看地图');
+                      return;
+                    }
+
+                    onOpenMap?.(savedTripId);
+                  }}
+                >
                   <MapPin className="w-4 h-4 mr-2" />
                   显示地图
                 </Button>

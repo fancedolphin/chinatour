@@ -14,7 +14,20 @@
       "Bash(ssh -i ~/.ssh/chinatour_ed25519 -o StrictHostKeyChecking=no -T git@github.com 2>&1)",
       "Bash(ping -c 1 140.82.112.4)",
       "Bash(node_modules/.bin/tsc --noEmit 2>&1 | head -40)",
-      "Bash(ls node_modules/.bin/tsc 2>/dev/null || bun run type-check 2>&1 | head -20 || echo \"no type-check script\")"
+      "Bash(ls node_modules/.bin/tsc 2>/dev/null || bun run type-check 2>&1 | head -20 || echo \"no type-check script\")",
+      "mcp__linear__list_teams",
+      "mcp__linear__list_projects",
+      "mcp__linear__get_project",
+      "mcp__linear__list_issues",
+      "Bash(find /mnt/d/chinaview/nodb/src -name \"*trip*\" -o -name \"*itinerary*\" | grep -E '\\\\.\\(ts|tsx\\)$')",
+      "Bash(find /mnt/d/chinaview/nodb/src -name \"*gemini*\" -o -name \"*ai*\" | grep -E '\\\\.\\(ts|tsx\\)$' | head -10)",
+      "Bash(find /mnt/d/chinaview/nodb/src -name \"*TripMapPage*\" -o -name \"*map*\" | grep -E '\\\\.\\(ts|tsx\\)$')",
+      "Bash(find /mnt/d/chinaview/nodb/src -name \"*gemini*\" -o -name \"*ai*\" -o -name \"*planner*\" | grep -E '\\\\.\\(ts|tsx\\)$')",
+      "mcp__linear__save_milestone",
+      "mcp__linear__save_issue",
+      "Bash(find:*)",
+      "mcp__linear-server__list_teams",
+      "mcp__linear-server__list_issues"
     ]
   },
   "enableAllProjectMcpServers": true,

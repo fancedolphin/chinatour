@@ -7,6 +7,7 @@
 import type { TripInsert } from '@/services/tripService';
 import type { TripItineraryInsert, ActivityInsert } from '@/services/itineraryService';
 import { amapService } from '@/services/amapService';
+import { geocodeAddress } from '@/services/googleGeocodingService';
 
 // ============ AI 生成的行程方案类型 ============
 
@@ -144,6 +145,27 @@ const extractCity = (destination: string): string => {
   return parts[0] || destination;
 };
 
+const hasCoordinates = (
+  coordinates?: PlanActivity['geoCoordinates'],
+): coordinates is NonNullable<PlanActivity['geoCoordinates']> =>
+  !!coordinates && Number.isFinite(coordinates.lat) && Number.isFinite(coordinates.lng);
+
+const parsePoiLocation = (location?: string): PlanActivity['geoCoordinates'] | undefined => {
+  if (!location) {
+    return undefined;
+  }
+
+  const [lngStr, latStr] = location.split(',');
+  const lat = Number.parseFloat(latStr);
+  const lng = Number.parseFloat(lngStr);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return undefined;
+  }
+
+  return { lat, lng };
+};
+
 const enhanceActivity = async (activity: PlanActivity, city: string): Promise<PlanActivity> => {
   // 跳过交通活动
   if (activity.type === 'transport') {
@@ -159,9 +181,11 @@ const enhanceActivity = async (activity: PlanActivity, city: string): Promise<Pl
   };
 
   try {
+    let enhanced = { ...activity };
+
     // 如果有坐标，优先附近搜索
     let poi = null;
-    if (activity.geoCoordinates?.lat && activity.geoCoordinates?.lng) {
+    if (hasCoordinates(activity.geoCoordinates)) {
       const nearby = await amapService.searchNearby(
         activity.geoCoordinates.lat,
         activity.geoCoordinates.lng,
@@ -174,25 +198,45 @@ const enhanceActivity = async (activity: PlanActivity, city: string): Promise<Pl
     // 兜底文本搜索
     if (!poi) {
       const pois = await amapService.searchPOI(
-        activity.name,
+        enhanced.name,
         city,
-        typeMap[activity.type],
+        typeMap[enhanced.type],
       );
       poi = pois && pois.length > 0 ? pois[0] : null;
     }
 
     // 找到 POI 后增强活动信息
     if (poi) {
-      return {
-        ...activity,
-        address: poi.address || activity.address,
-        image_url: poi.photos && poi.photos.length > 0 ? poi.photos[0].url : activity.image_url,
-        duration: activity.duration, // 保留 AI 生成的时长
-        price: poi.cost || activity.price,
+      enhanced = {
+        ...enhanced,
+        address: poi.address || enhanced.address,
+        image_url: poi.photos && poi.photos.length > 0 ? poi.photos[0].url : enhanced.image_url,
+        duration: enhanced.duration,
+        price: poi.cost || enhanced.price,
       };
+
+      const coords = parsePoiLocation(poi.location);
+      if (coords) {
+        enhanced = {
+          ...enhanced,
+          geoCoordinates: coords,
+        };
+      }
     }
 
-    return activity;
+    if (!hasCoordinates(enhanced.geoCoordinates)) {
+      const query = enhanced.address || `${enhanced.name} ${city}`.trim();
+      const coords = await geocodeAddress(query);
+
+      if (coords) {
+        enhanced = {
+          ...enhanced,
+          geoCoordinates: coords,
+        };
+      }
+    }
+
+    return enhanced;
   } catch (error) {
     console.error('[tripDataTransformer] Failed to enhance activity with Amap', {
       activityName: activity.name,

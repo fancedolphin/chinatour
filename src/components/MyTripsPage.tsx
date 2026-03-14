@@ -24,9 +24,11 @@ type ViewMode = 'list' | 'detail' | 'map';
 interface MyTripsPageProps {
   onNavigateToPlanner?: () => void;
   onContinueChat?: (tripId: string) => void;
+  openMapTripId?: string;
+  onOpenMapHandled?: () => void;
 }
 
-export function MyTripsPage({ onNavigateToPlanner, onContinueChat }: MyTripsPageProps = {}) {
+export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId, onOpenMapHandled }: MyTripsPageProps = {}) {
   const { currentUser, loading: authLoading } = useAuthContext();
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
@@ -59,6 +61,16 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat }: MyTripsPage
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [currentUser, viewMode]);
+
+  useEffect(() => {
+    if (!openMapTripId) {
+      return;
+    }
+
+    setSelectedTripId(openMapTripId);
+    setViewMode('map');
+    onOpenMapHandled?.();
+  }, [openMapTripId, onOpenMapHandled]);
 
   const loadTrips = async () => {
     try {
@@ -143,8 +155,17 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat }: MyTripsPage
     setViewMode('detail');
   };
 
-  const handleOpenMap = () => {
+  const handleViewMap = (tripId: string) => {
+    setSelectedTripId(tripId);
     setViewMode('map');
+  };
+
+  const handleOpenMap = () => {
+    if (!selectedTripId) {
+      return;
+    }
+
+    handleViewMap(selectedTripId);
   };
 
   const handleBackToList = () => {
@@ -291,6 +312,17 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat }: MyTripsPage
                     title="继续与AI对话"
                   >
                     <MessageSquare className="w-4 h-4 text-blue-500" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleViewMap(trip.id);
+                    }}
+                    title="查看地图和路线"
+                  >
+                    <MapPin className="w-4 h-4 text-green-500" />
                   </Button>
                   <Button
                     variant="outline"

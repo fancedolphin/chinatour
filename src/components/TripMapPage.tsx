@@ -1,24 +1,60 @@
-import { useState, useRef, useCallback } from 'react';
-import { ChevronLeft, Download, Navigation, Layers, DollarSign, GripVertical, MapPin, Calendar, Clock, Image as ImageIcon } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { ChevronLeft, MapPin, Navigation, Heart, Search, Map as MapIcon, Play, ExternalLink, BookOpen, Share2 } from 'lucide-react';
 import { Button } from './ui/button';
-import { Badge } from './ui/badge';
-import { Slider } from './ui/slider';
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from './ui/sheet';
-import { RadioGroup, RadioGroupItem } from './ui/radio-group';
-import { Label } from './ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { toast } from 'sonner@2.0.3';
+import { motion, AnimatePresence } from 'motion/react';
+import { getAmapConfig } from '@/services/amapConfigService';
 
-interface MapPoint {
+declare global {
+  interface Window {
+    _AMapSecurityConfig?: {
+      securityJsCode: string;
+    };
+    AMap?: any;
+    initAMap?: () => void;
+  }
+}
+
+// --- Data Types ---
+interface Article {
+  title: string;
+  cover: string;
+  authorAvatar: string;
+  authorName: string;
+  likes: number;
+  url: string; // 小红书链接
+}
+
+interface Video {
+  thumbnail: string;
+  authorAvatar: string;
+  authorName: string;
+  date: string;
+  platform: 'douyin' | 'xiaohongshu';
+  title: string;
+}
+
+interface LocationPoint {
   id: string;
   name: string;
-  type: 'attraction' | 'meal' | 'hotel';
+  city: string;
+  district: string;
+  address: string;
   lat: number;
   lng: number;
-  day: number;
-  time: string;
-  price?: string;
-  order: number;
+  distance: string;
+  articles: Article[];
+  videos: Video[];
+  type: 'restaurant' | 'attraction' | 'hotel';
+  order: number; // 行程顺序
+}
+
+interface CityCluster {
+  name: string;
+  lat: number;
+  lng: number;
+  count: number;
+  locations: LocationPoint[];
 }
 
 interface TripMapPageProps {
@@ -26,387 +62,957 @@ interface TripMapPageProps {
   onBack: () => void;
 }
 
+// --- Mock Data ---
+const AVATAR_1 = 'https://images.unsplash.com/photo-1603954698693-b0bcbceb5ad0?auto=format&fit=crop&q=80&w=100&h=100';
+const AVATAR_2 = 'https://images.unsplash.com/photo-1650546321048-b34b6c9ad5e4?auto=format&fit=crop&q=80&w=100&h=100';
+const AVATAR_3 = 'https://images.unsplash.com/photo-1708010265439-24cb8d71ae50?auto=format&fit=crop&q=80&w=100&h=100';
+const AVATAR_4 = 'https://images.unsplash.com/photo-1769961982483-c24e7ff7a131?auto=format&fit=crop&q=80&w=100&h=100';
+
+const MOCK_LOCATIONS: LocationPoint[] = [
+  {
+    id: '1', name: '宫宴', city: '北京市', district: '东城区',
+    address: '前门大街50号', lat: 39.8998, lng: 116.3975, distance: '8031.0',
+    type: 'restaurant',
+    order: 1,
+    articles: [
+      { title: '北京宫廷宴体验', cover: 'https://images.unsplash.com/photo-1746243044880-4b71e10be164?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_4, authorName: '特别乌啦啦', likes: 1200, url: 'https://www.xiaohongshu.com/explore/item/645678901234567890' },
+      { title: '北京最豪华的宫廷宴', cover: 'https://images.unsplash.com/photo-1742315035520-6eeea1463303?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_1, authorName: '真探唐仁杰', likes: 800, url: 'https://www.xiaohongshu.com/explore/item/645678901234567891' },
+    ],
+    videos: [
+      {
+        thumbnail: 'https://images.unsplash.com/photo-1746243044880-4b71e10be164?auto=format&fit=crop&q=80&w=300',
+        authorAvatar: AVATAR_4, authorName: '特别乌啦啦',
+        date: '2025-04-30', platform: 'douyin',
+        title: '花498元在北京参加「宫廷宴会」～当太子的感觉实在是爽',
+      },
+      {
+        thumbnail: 'https://images.unsplash.com/photo-1742315035520-6eeea1463303?auto=format&fit=crop&q=80&w=300',
+        authorAvatar: AVATAR_1, authorName: '真探唐仁杰',
+        date: '2025-03-15', platform: 'douyin',
+        title: '北京最豪华的宫廷宴！一桌下来人均不到300？',
+      },
+    ],
+  },
+  {
+    id: '2', name: '祥云轩', city: '北京市', district: '西城区',
+    address: '西单大悦城8层', lat: 39.9087, lng: 116.3748, distance: '8030.6',
+    type: 'restaurant',
+    order: 2,
+    articles: [
+      { title: '西单粤菜推荐', cover: 'https://images.unsplash.com/photo-1767298113547-11e95951608b?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_1, authorName: '真探唐仁杰', likes: 500, url: 'https://www.xiaohongshu.com/explore/item/645678901234567892' },
+    ],
+    videos: [
+      {
+        thumbnail: 'https://images.unsplash.com/photo-1767298113547-11e95951608b?auto=format&fit=crop&q=80&w=300',
+        authorAvatar: AVATAR_1, authorName: '真探唐仁杰',
+        date: '2025-05-10', platform: 'xiaohongshu',
+        title: '西单这家粤菜真的绝了！环境好味道也很棒',
+      },
+    ],
+  },
+  {
+    id: '3', name: '故宫博物院', city: '北京市', district: '东城区',
+    address: '景山前街4号', lat: 39.9163, lng: 116.3972, distance: '8029.5',
+    type: 'attraction',
+    order: 3,
+    articles: [
+      { title: '故宫拍照攻略', cover: 'https://images.unsplash.com/photo-1718749742771-d33cd3719fab?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_2, authorName: '旅行小王子', likes: 1500, url: 'https://www.xiaohongshu.com/explore/item/645678901234567893' },
+      { title: '故宫必去景点', cover: 'https://images.unsplash.com/photo-1718749742771-d33cd3719fab?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_3, authorName: '探店小花', likes: 1000, url: 'https://www.xiaohongshu.com/explore/item/645678901234567894' },
+    ],
+    videos: [
+      {
+        thumbnail: 'https://images.unsplash.com/photo-1718749742771-d33cd3719fab?auto=format&fit=crop&q=80&w=300',
+        authorAvatar: AVATAR_2, authorName: '旅行小王子',
+        date: '2025-04-20', platform: 'xiaohongshu',
+        title: '故宫拍照攻略！这些机位出片率100%',
+      },
+    ],
+  },
+  {
+    id: '4', name: '南锣鼓巷', city: '北京市', district: '东城区',
+    address: '南锣鼓巷胡同', lat: 39.9375, lng: 116.4027, distance: '8028.3',
+    type: 'attraction',
+    order: 4,
+    articles: [
+      { title: '南锣鼓巷探店', cover: 'https://images.unsplash.com/photo-1772764058009-e6cb2203d773?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_3, authorName: '探店小花', likes: 700, url: 'https://www.xiaohongshu.com/explore/item/645678901234567895' },
+    ],
+    videos: [
+      {
+        thumbnail: 'https://images.unsplash.com/photo-1772764058009-e6cb2203d773?auto=format&fit=crop&q=80&w=300',
+        authorAvatar: AVATAR_3, authorName: '探店小花',
+        date: '2025-05-01', platform: 'douyin',
+        title: '南锣鼓巷这条胡同太有感觉了！',
+      },
+    ],
+  },
+  {
+    id: '5', name: '天津之眼', city: '天津市', district: '河北区',
+    address: '三岔河口永乐桥上', lat: 39.1467, lng: 117.1734, distance: '8120.0',
+    type: 'attraction',
+    order: 5,
+    articles: [
+      { title: '天津之眼夜景', cover: 'https://images.unsplash.com/photo-1758642064140-cb97bb65582c?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_2, authorName: '旅行小王子', likes: 1300, url: 'https://www.xiaohongshu.com/explore/item/645678901234567896' },
+    ],
+    videos: [
+      {
+        thumbnail: 'https://images.unsplash.com/photo-1758642064140-cb97bb65582c?auto=format&fit=crop&q=80&w=300',
+        authorAvatar: AVATAR_2, authorName: '旅行小王子',
+        date: '2025-04-10', platform: 'douyin',
+        title: '天津之眼的夜景太美了！必打卡',
+      },
+    ],
+  },
+  {
+    id: '6', name: '煎饼果子老店', city: '天津市', district: '和平区',
+    address: '南市食品街内', lat: 39.1255, lng: 117.1902, distance: '8121.5',
+    type: 'restaurant',
+    order: 6,
+    articles: [
+      { title: '天津煎饼果子', cover: 'https://images.unsplash.com/photo-1723688743324-d971fc428621?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_1, authorName: '真探唐仁杰', likes: 600, url: 'https://www.xiaohongshu.com/explore/item/645678901234567897' },
+      { title: '天津煎饼果子体验', cover: 'https://images.unsplash.com/photo-1723688743324-d971fc428621?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_4, authorName: '特别乌啦啦', likes: 400, url: 'https://www.xiaohongshu.com/explore/item/645678901234567898' },
+    ],
+    videos: [
+      {
+        thumbnail: 'https://images.unsplash.com/photo-1723688743324-d971fc428621?auto=format&fit=crop&q=80&w=300',
+        authorAvatar: AVATAR_1, authorName: '真探唐仁杰',
+        date: '2025-03-28', platform: 'xiaohongshu',
+        title: '天津最正宗的煎饼果子在这里！排队一小时也值',
+      },
+    ],
+  },
+  {
+    id: '7', name: '三河古镇', city: '廊坊市', district: '三河市',
+    address: '三河市中心区', lat: 39.9830, lng: 117.0780, distance: '8050.0',
+    type: 'attraction',
+    order: 7,
+    articles: [
+      { title: '三河古镇探店', cover: 'https://images.unsplash.com/photo-1772764058009-e6cb2203d773?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_3, authorName: '探店小花', likes: 500, url: 'https://www.xiaohongshu.com/explore/item/645678901234567899' },
+    ],
+    videos: [],
+  },
+];
+
+// Build city clusters from locations
+function buildClusters(locations: LocationPoint[]): CityCluster[] {
+  const cityMap = new Map<string, LocationPoint[]>();
+  locations.forEach(loc => {
+    const list = cityMap.get(loc.city) || [];
+    list.push(loc);
+    cityMap.set(loc.city, list);
+  });
+
+  const clusters: CityCluster[] = [];
+  cityMap.forEach((locs, city) => {
+    const avgLat = locs.reduce((s, l) => s + l.lat, 0) / locs.length;
+    const avgLng = locs.reduce((s, l) => s + l.lng, 0) / locs.length;
+    clusters.push({ name: city, lat: avgLat, lng: avgLng, count: locs.length, locations: locs });
+  });
+  return clusters;
+}
+
+const CITY_CLUSTERS = buildClusters(MOCK_LOCATIONS);
+const ZOOM_THRESHOLD = 11;
+const AMAP_SCRIPT_SELECTOR = 'script[data-amap-sdk-version="1.4.15"]';
+
+// --- Main Component ---
 export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
-  const [selectedDay, setSelectedDay] = useState<number>(0); // 0 = all days
-  const [budgetLevel, setBudgetLevel] = useState<string>('comfort');
-  const [isDragging, setIsDragging] = useState(false);
-  const [draggedItem, setDraggedItem] = useState<string | null>(null);
-  const [isRecalculating, setIsRecalculating] = useState(false);
+  const [mapLoaded, setMapLoaded] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [zoomLevel, setZoomLevel] = useState(8);
+  const [selectedLocation, setSelectedLocation] = useState<LocationPoint | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [isFavorited, setIsFavorited] = useState(false);
+
   const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<any>(null);
+  const markersRef = useRef<any[]>([]);
+  const polylinesRef = useRef<any[]>([]);
+  const stepMarkersRef = useRef<any[]>([]);
+  const [showExportMenu, setShowExportMenu] = useState(false);
 
-  // Mock map points data
-  const [mapPoints, setMapPoints] = useState<MapPoint[]>([
-    { id: '1', name: '大英博物馆', type: 'attraction', lat: 51.5194, lng: -0.1270, day: 1, time: '14:00', price: '免费', order: 1 },
-    { id: '2', name: 'Dishoom餐厅', type: 'meal', lat: 51.5123, lng: -0.1240, day: 1, time: '12:00', price: '£25', order: 2 },
-    { id: '3', name: '白金汉宫', type: 'attraction', lat: 51.5014, lng: -0.1419, day: 2, time: '10:00', price: '免费', order: 3 },
-    { id: '4', name: '伦敦塔', type: 'attraction', lat: 51.5081, lng: -0.0759, day: 2, time: '15:00', price: '£33.60', order: 4 },
-    { id: '5', name: 'Sketch餐厅', type: 'meal', lat: 51.5129, lng: -0.1410, day: 2, time: '12:30', price: '£42', order: 5 },
-  ]);
-
-  const days = [
-    { value: 0, label: '全部行程' },
-    { value: 1, label: 'Day 1 - 市中心初探' },
-    { value: 2, label: 'Day 2 - 皇家巡礼' },
-    { value: 3, label: 'Day 3 - 文化之旅' },
-  ];
-
-  const budgetLevels = [
-    { value: 'economy', label: '经济型', desc: '< £10/天' },
-    { value: 'comfort', label: '舒适型', desc: '£10-20/天' },
-    { value: 'premium', label: '优享型', desc: '£20-50/天' },
-    { value: 'luxury', label: '豪华型', desc: '£50+/天' },
-  ];
-
-  // Filter points by selected day
-  const filteredPoints = selectedDay === 0 
-    ? mapPoints 
-    : mapPoints.filter(p => p.day === selectedDay);
-
-  // Handle drag and drop
-  const handleDragStart = (e: React.DragEvent, pointId: string) => {
-    setIsDragging(true);
-    setDraggedItem(pointId);
-    e.dataTransfer.effectAllowed = 'move';
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  };
-
-  const handleDrop = (e: React.DragEvent, targetPointId: string) => {
-    e.preventDefault();
-    setIsDragging(false);
-
-    if (!draggedItem || draggedItem === targetPointId) {
-      setDraggedItem(null);
+  // Load AMap Script
+  useEffect(() => {
+    if (window.AMap) {
+      setMapLoaded(true);
       return;
     }
 
-    // Reorder points
-    const newPoints = [...mapPoints];
-    const draggedIndex = newPoints.findIndex(p => p.id === draggedItem);
-    const targetIndex = newPoints.findIndex(p => p.id === targetPointId);
+    const originalAlert = window.alert;
+    window.alert = function (message) {
+      if (typeof message === 'string' && (message.includes('USERKEY') || message.includes('AMap'))) {
+        console.warn('AMap Warning:', message);
+        return;
+      }
+      originalAlert(message);
+    };
 
-    const [removed] = newPoints.splice(draggedIndex, 1);
-    newPoints.splice(targetIndex, 0, removed);
+    let cancelled = false;
 
-    // Update order
-    newPoints.forEach((point, index) => {
-      point.order = index;
+    getAmapConfig()
+      .then((config) => {
+        if (cancelled) {
+          return;
+        }
+
+        if (!config?.key || !config?.securityCode) {
+          setConfigError('地图配置错误');
+          return;
+        }
+
+        window._AMapSecurityConfig = { securityJsCode: config.securityCode };
+        window.initAMap = () => {
+          if (!cancelled) {
+            setMapLoaded(true);
+            setConfigError(null);
+          }
+        };
+
+        const existingScript = document.querySelector<HTMLScriptElement>(AMAP_SCRIPT_SELECTOR);
+        if (existingScript) {
+          existingScript.addEventListener('load', window.initAMap, { once: true });
+          existingScript.addEventListener('error', () => {
+            if (!cancelled) {
+              toast.error('地图加载失败');
+              setConfigError('地图脚本加载失败');
+              setMapLoaded(false);
+            }
+          }, { once: true });
+          return;
+        }
+
+        const script = document.createElement('script');
+        script.dataset.amapSdkVersion = '1.4.15';
+        script.src = `https://webapi.amap.com/maps?v=1.4.15&key=${config.key}&callback=initAMap`;
+        script.async = true;
+        script.onerror = () => {
+          if (!cancelled) {
+            toast.error('地图加载失败');
+            setConfigError('地图脚本加载失败');
+            setMapLoaded(false);
+          }
+        };
+        document.body.appendChild(script);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch AMap config:', err);
+        if (!cancelled) {
+          setConfigError('无法获取地图配置');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      window.alert = originalAlert;
+      delete window.initAMap;
+    };
+  }, []);
+
+  // Initialize Map
+  useEffect(() => {
+    if (!mapLoaded || !mapContainerRef.current || mapRef.current) return;
+    try {
+      const map = new window.AMap.Map(mapContainerRef.current, {
+        zoom: 8,
+        center: [116.5, 39.5], // Beijing-Tianjin area
+        mapStyle: 'amap://styles/normal',
+      });
+      mapRef.current = map;
+
+      map.on('zoomend', () => {
+        const z = map.getZoom();
+        setZoomLevel(z);
+      });
+
+      setZoomLevel(8);
+    } catch (e) {
+      console.error('Map init failed', e);
+    }
+  }, [mapLoaded]);
+
+  // Clear all markers
+  const clearMarkers = useCallback(() => {
+    markersRef.current.forEach(m => { try { m.setMap(null); } catch {} });
+    markersRef.current = [];
+  }, []);
+
+  // Clear route overlays
+  const clearRoute = useCallback(() => {
+    polylinesRef.current.forEach(p => { try { p.setMap(null); } catch {} });
+    polylinesRef.current = [];
+  }, []);
+
+  // Clear step markers only
+  const clearStepMarkers = useCallback(() => {
+    stepMarkersRef.current.forEach(m => { try { m.setMap(null); } catch {} });
+    stepMarkersRef.current = [];
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearMarkers();
+      clearRoute();
+      clearStepMarkers();
+
+      if (mapRef.current) {
+        try {
+          mapRef.current.destroy();
+        } catch {}
+        mapRef.current = null;
+      }
+    };
+  }, [clearMarkers, clearRoute, clearStepMarkers]);
+
+  // Render route polyline (always visible on map)
+  const renderRoutePolyline = useCallback(() => {
+    if (!mapRef.current || !window.AMap) return;
+    // Only redraw if not already drawn
+    if (polylinesRef.current.length > 0) return;
+
+    const sorted = [...MOCK_LOCATIONS].sort((a, b) => a.order - b.order);
+    if (sorted.length < 2) return;
+
+    const path = sorted.map(loc => new window.AMap.LngLat(loc.lng, loc.lat));
+    try {
+      const polyline = new window.AMap.Polyline({
+        path,
+        strokeColor: '#ef4444',
+        strokeWeight: 3,
+        strokeStyle: 'dashed',
+        strokeDasharray: [10, 6],
+        strokeOpacity: 0.8,
+        lineJoin: 'round',
+        lineCap: 'round',
+        zIndex: 50,
+      });
+      polyline.setMap(mapRef.current);
+      polylinesRef.current.push(polyline);
+    } catch (e) {
+      console.warn('Polyline failed', e);
+    }
+  }, []);
+
+  // Render numbered step markers (only when zoomed in)
+  const renderStepMarkers = useCallback(() => {
+    if (!mapRef.current || !window.AMap) return;
+    clearStepMarkers();
+
+    const sorted = [...MOCK_LOCATIONS].sort((a, b) => a.order - b.order);
+
+    sorted.forEach((loc) => {
+      const isFirst = loc.order === 1;
+      const isLast = loc.order === sorted.length;
+      const bgColor = isFirst ? '#22c55e' : isLast ? '#9333ea' : '#ef4444';
+      const label = isFirst ? '起' : isLast ? '终' : `${loc.order}`;
+
+      const el = document.createElement('div');
+      el.style.cssText = 'display:flex;flex-direction:column;align-items:center;pointer-events:none;';
+      el.innerHTML = `
+        <div style="width:28px;height:28px;border-radius:50%;background:${bgColor};color:white;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.3);border:2px solid white;">
+          ${label}
+        </div>
+      `;
+
+      try {
+        const marker = new window.AMap.Marker({
+          position: [loc.lng, loc.lat],
+          content: el,
+          offset: new window.AMap.Pixel(-14, -14),
+          zIndex: 110,
+        });
+        marker.setMap(mapRef.current);
+        stepMarkersRef.current.push(marker);
+      } catch {}
+    });
+  }, [clearStepMarkers]);
+
+  // Render polyline once map loads (always visible)
+  useEffect(() => {
+    if (!mapRef.current || !window.AMap || !mapLoaded) return;
+    if (selectedLocation) return;
+    renderRoutePolyline();
+  }, [mapLoaded, selectedLocation, renderRoutePolyline]);
+
+  // Show/hide step markers based on zoom level
+  useEffect(() => {
+    if (!mapRef.current || !window.AMap || !mapLoaded) return;
+    if (selectedLocation) return;
+
+    if (zoomLevel >= ZOOM_THRESHOLD) {
+      renderStepMarkers();
+    } else {
+      clearStepMarkers();
+    }
+  }, [zoomLevel, mapLoaded, selectedLocation, renderStepMarkers, clearStepMarkers]);
+
+  // Export to AMap App
+  const exportToAMap = useCallback(() => {
+    const sorted = [...MOCK_LOCATIONS].sort((a, b) => a.order - b.order);
+    if (sorted.length === 0) return;
+    // AMap URI scheme: multi-destination driving
+    const start = sorted[0];
+    const end = sorted[sorted.length - 1];
+    const waypoints = sorted.slice(1, -1);
+
+    let url = `https://uri.amap.com/navigation?from=${start.lng},${start.lat},${encodeURIComponent(start.name)}&to=${end.lng},${end.lat},${encodeURIComponent(end.name)}`;
+    if (waypoints.length > 0) {
+      const viaStr = waypoints.map(w => `${w.lng},${w.lat},${encodeURIComponent(w.name)}`).join(';');
+      url += `&via=${viaStr}`;
+    }
+    url += '&mode=car&callnative=1';
+    window.open(url, '_blank');
+    toast.success('正在打开高德地图...');
+    setShowExportMenu(false);
+  }, []);
+
+  // Export to Google Maps
+  const exportToGoogleMaps = useCallback(() => {
+    const sorted = [...MOCK_LOCATIONS].sort((a, b) => a.order - b.order);
+    if (sorted.length === 0) return;
+    const start = sorted[0];
+    const end = sorted[sorted.length - 1];
+    const waypoints = sorted.slice(1, -1);
+
+    let url = `https://www.google.com/maps/dir/?api=1&origin=${start.lat},${start.lng}&destination=${end.lat},${end.lng}`;
+    if (waypoints.length > 0) {
+      const waypointStr = waypoints.map(w => `${w.lat},${w.lng}`).join('|');
+      url += `&waypoints=${waypointStr}`;
+    }
+    url += '&travelmode=driving';
+    window.open(url, '_blank');
+    toast.success('正在打开 Google Maps...');
+    setShowExportMenu(false);
+  }, []);
+
+  // Render cluster markers (zoomed out)
+  const renderClusters = useCallback(() => {
+    if (!mapRef.current || !window.AMap) return;
+    clearMarkers();
+
+    CITY_CLUSTERS.forEach(cluster => {
+      const el = document.createElement('div');
+      el.style.cssText = 'display:flex;flex-direction:column;align-items:center;cursor:pointer;';
+      el.innerHTML = `
+        <div style="display:flex;align-items:center;background:linear-gradient(135deg,#ef4444,#ec4899);color:white;border-radius:10px;padding:6px 14px 6px 10px;font-weight:700;font-size:14px;box-shadow:0 2px 12px rgba(239,68,68,0.4);gap:6px;">
+          <span style="background:rgba(255,255,255,0.3);border-radius:6px;padding:2px 8px;font-size:15px;min-width:22px;text-align:center;">${cluster.count}</span>
+          <span>${cluster.name}</span>
+        </div>
+        <div style="width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-top:8px solid #ef4444;margin-top:-1px;"></div>
+      `;
+
+      try {
+        const marker = new window.AMap.Marker({
+          position: [cluster.lng, cluster.lat],
+          content: el,
+          offset: new window.AMap.Pixel(-50, -50),
+          zIndex: 100,
+        });
+
+        marker.on('click', () => {
+          mapRef.current.setZoomAndCenter(13, [cluster.lng, cluster.lat]);
+        });
+
+        marker.setMap(mapRef.current);
+        markersRef.current.push(marker);
+      } catch (e) {
+        console.warn('Cluster marker failed', e);
+      }
+    });
+  }, [clearMarkers]);
+
+  // Render individual location markers (zoomed in)
+  const renderLocationMarkers = useCallback(() => {
+    if (!mapRef.current || !window.AMap) return;
+    clearMarkers();
+
+    // Only show locations in the current viewport
+    const bounds = mapRef.current.getBounds();
+    const visibleLocations = MOCK_LOCATIONS.filter(loc => {
+      if (!bounds) return true;
+      try {
+        const ne = bounds.getNorthEast();
+        const sw = bounds.getSouthWest();
+        return loc.lat >= sw.getLat() && loc.lat <= ne.getLat() &&
+               loc.lng >= sw.getLng() && loc.lng <= ne.getLng();
+      } catch { return true; }
     });
 
-    setMapPoints(newPoints);
-    setDraggedItem(null);
+    visibleLocations.forEach(loc => {
+      const el = document.createElement('div');
+      el.style.cssText = 'display:flex;flex-direction:column;align-items:center;cursor:pointer;';
 
-    // Simulate recalculation
-    setIsRecalculating(true);
-    toast.info('正在重新计算路线...');
-    setTimeout(() => {
-      setIsRecalculating(false);
-      toast.success('路线已更新！');
-    }, 3000);
-  };
+      const recHtml = loc.articles.slice(0, 2).map(a => `
+        <div style="display:flex;align-items:center;gap:4px;">
+          <img src="${a.authorAvatar}" style="width:20px;height:20px;border-radius:50%;object-fit:cover;border:1px solid #fecdd3;" />
+          <span style="font-size:11px;color:#9f1239;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${a.authorName}</span>
+        </div>
+      `).join('');
 
-  // Handle budget change
-  const handleBudgetChange = (value: string) => {
-    setBudgetLevel(value);
-    toast.info('正在根据新预算重新计算推荐...');
-    
-    // Simulate recalculation with new budget
-    setTimeout(() => {
-      // Mock: adjust prices based on budget level
-      const newPoints = mapPoints.map(point => {
-        if (point.type === 'meal') {
-          switch (value) {
-            case 'economy':
-              return { ...point, price: '£10-15' };
-            case 'comfort':
-              return { ...point, price: '£20-30' };
-            case 'premium':
-              return { ...point, price: '£40-60' };
-            case 'luxury':
-              return { ...point, price: '£80+' };
-            default:
-              return point;
-          }
-        }
-        return point;
-      });
-      setMapPoints(newPoints);
-      toast.success('推荐已更新！');
-    }, 2000);
-  };
-
-  // Handle offline save
-  const handleOfflineSave = () => {
-    toast.info('正在缓存地图数据...');
-    setTimeout(() => {
-      toast.success('离线数据已保存！可以在无网络环境下查看行程。');
-    }, 1500);
-  };
-
-  // Handle export as image
-  const handleExportImage = () => {
-    toast.info('正在生成行程地图图片...');
-    setTimeout(() => {
-      // Mock image export
-      const link = document.createElement('a');
-      link.download = 'trip-map.png';
-      toast.success('地图图片已下载！');
-    }, 2000);
-  };
-
-  // Handle navigation
-  const handleNavigate = (point: MapPoint) => {
-    const isChina = false; // Detect user location or preference
-    const encodedName = encodeURIComponent(point.name);
-    
-    if (isChina) {
-      // Gaode Maps (高德地图)
-      window.open(`https://uri.amap.com/marker?position=${point.lng},${point.lat}&name=${encodedName}&src=myapp&coordinate=gaode&callnative=1`);
-    } else {
-      // Google Maps
-      window.open(`https://www.google.com/maps/dir/?api=1&destination=${point.lat},${point.lng}&travelmode=transit`);
-    }
-  };
-
-  const getPointColor = (type: string) => {
-    switch (type) {
-      case 'attraction':
-        return 'bg-blue-500';
-      case 'meal':
-        return 'bg-orange-500';
-      case 'hotel':
-        return 'bg-purple-500';
-      default:
-        return 'bg-gray-500';
-    }
-  };
-
-  const getPointIcon = (type: string) => {
-    switch (type) {
-      case 'attraction':
-        return '📸';
-      case 'meal':
-        return '🍽️';
-      case 'hotel':
-        return '🏨';
-      default:
-        return '📍';
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
-      {/* Header */}
-      <div className="sticky top-0 bg-white border-b border-gray-200 z-40">
-        <div className="max-w-screen-xl mx-auto px-4 py-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <button onClick={onBack} className="p-1">
-                <ChevronLeft className="w-6 h-6 text-gray-700" />
-              </button>
-              <h1 className="text-gray-900">行程地图</h1>
-            </div>
-            <div className="flex items-center gap-2">
-              {/* Day Selector */}
-              <Select value={selectedDay.toString()} onValueChange={(v) => setSelectedDay(parseInt(v))}>
-                <SelectTrigger className="w-[160px] h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {days.map((day) => (
-                    <SelectItem key={day.value} value={day.value.toString()}>
-                      {day.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {/* More Options */}
-              <Sheet>
-                <SheetTrigger asChild>
-                  <Button variant="ghost" size="sm">
-                    <Layers className="w-4 h-4" />
-                  </Button>
-                </SheetTrigger>
-                <SheetContent side="bottom" className="h-[80vh]">
-                  <SheetHeader>
-                    <SheetTitle>地图选项</SheetTitle>
-                  </SheetHeader>
-                  
-                  <div className="space-y-6 mt-6">
-                    {/* Budget Level */}
-                    <div>
-                      <Label className="mb-3 flex items-center gap-2">
-                        <DollarSign className="w-4 h-4" />
-                        预算档位
-                      </Label>
-                      <RadioGroup value={budgetLevel} onValueChange={handleBudgetChange}>
-                        <div className="space-y-3">
-                          {budgetLevels.map((level) => (
-                            <div key={level.value} className="flex items-center space-x-2">
-                              <RadioGroupItem value={level.value} id={level.value} />
-                              <Label htmlFor={level.value} className="flex-1 cursor-pointer">
-                                <div>{level.label}</div>
-                                <div className="text-xs text-gray-500">{level.desc}</div>
-                              </Label>
-                            </div>
-                          ))}
-                        </div>
-                      </RadioGroup>
-                    </div>
-
-                    {/* Offline Save */}
-                    <div>
-                      <Button 
-                        variant="outline" 
-                        className="w-full justify-start"
-                        onClick={handleOfflineSave}
-                      >
-                        <Download className="w-4 h-4 mr-2" />
-                        离线保存（缓存地图数据）
-                      </Button>
-                      <p className="text-xs text-gray-500 mt-2">
-                        将下载轻量地图瓦片，支持无网络查看
-                      </p>
-                    </div>
-
-                    {/* Export Image */}
-                    <div>
-                      <Button 
-                        variant="outline" 
-                        className="w-full justify-start"
-                        onClick={handleExportImage}
-                      >
-                        <ImageIcon className="w-4 h-4 mr-2" />
-                        导出为图片
-                      </Button>
-                      <p className="text-xs text-gray-500 mt-2">
-                        生成行程地图静态图片
-                      </p>
-                    </div>
-                  </div>
-                </SheetContent>
-              </Sheet>
-            </div>
+      el.innerHTML = `
+        <div style="background:#fff1f2;border:2px solid #fb7185;border-radius:12px;padding:10px 12px;min-width:120px;box-shadow:0 2px 12px rgba(244,63,94,0.25);">
+          <div style="font-weight:700;font-size:14px;color:#1a1a1a;margin-bottom:4px;">${loc.name}</div>
+          <div style="display:flex;align-items:center;gap:3px;margin-bottom:6px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+            <span style="font-size:12px;color:#ef4444;font-weight:600;">${loc.distance}km</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            ${recHtml}
           </div>
         </div>
-      </div>
+        <div style="width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-top:8px solid #fb7185;margin-top:-1px;"></div>
+      `;
 
-      {/* Map Container (Mock) */}
-      <div 
+      try {
+        const marker = new window.AMap.Marker({
+          position: [loc.lng, loc.lat],
+          content: el,
+          offset: new window.AMap.Pixel(-60, -120),
+          zIndex: 80,
+        });
+
+        marker.on('click', () => {
+          openLocationDetail(loc);
+        });
+
+        marker.setMap(mapRef.current);
+        markersRef.current.push(marker);
+      } catch (e) {
+        console.warn('Location marker failed', e);
+      }
+    });
+
+    // Also add small pin markers
+    MOCK_LOCATIONS.forEach(loc => {
+      const pinEl = document.createElement('div');
+      pinEl.innerHTML = `
+        <div style="width:12px;height:12px;background:#ef4444;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>
+      `;
+      try {
+        const pin = new window.AMap.Marker({
+          position: [loc.lng, loc.lat],
+          content: pinEl,
+          offset: new window.AMap.Pixel(-6, -6),
+          zIndex: 60,
+        });
+        pin.setMap(mapRef.current);
+        markersRef.current.push(pin);
+      } catch {}
+    });
+  }, [clearMarkers]);
+
+  // Update markers based on zoom level
+  useEffect(() => {
+    if (!mapRef.current || !window.AMap) return;
+    if (selectedLocation) return; // Don't update markers when detail view is open
+
+    if (zoomLevel < ZOOM_THRESHOLD) {
+      renderClusters();
+    } else {
+      renderLocationMarkers();
+    }
+  }, [zoomLevel, mapLoaded, selectedLocation, renderClusters, renderLocationMarkers]);
+
+  // Open location detail with loading animation
+  const openLocationDetail = useCallback((loc: LocationPoint) => {
+    setDetailLoading(true);
+    setSelectedLocation(loc);
+    setIsFavorited(false);
+    // Simulate loading
+    setTimeout(() => setDetailLoading(false), 1200);
+  }, []);
+
+  // Close detail and return to map
+  const closeDetail = useCallback(() => {
+    setSelectedLocation(null);
+    setDetailLoading(false);
+  }, []);
+
+  // --- Render ---
+  return (
+    <div className="fixed inset-0 z-[60] bg-gray-50 overflow-hidden">
+      {/* Map Container */}
+      <div
         ref={mapContainerRef}
-        className="relative flex-1 bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50"
-      >
-        {/* Mock Map with Points */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="text-center space-y-4 p-8">
-            <MapPin className="w-16 h-16 text-red-500 mx-auto" />
-            <div className="text-gray-600">
-              <p className="mb-2">地图视图 (集成地图服务)</p>
-              <p className="text-sm text-gray-400">
-                显示 {filteredPoints.length} 个点位
-                {selectedDay > 0 && ` · Day ${selectedDay}`}
-              </p>
-            </div>
-            {isRecalculating && (
-              <Badge variant="outline" className="border-blue-500 text-blue-500 animate-pulse">
-                正在重新计算路线...
-              </Badge>
+        className="absolute inset-0 z-0"
+        style={{ width: '100%', height: '100%' }}
+      />
+
+      {/* Map Loading State */}
+      {!mapLoaded && !selectedLocation && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-gray-50">
+          <div className="flex flex-col items-center">
+            {configError ? (
+              <>
+                <MapPin className="w-10 h-10 text-gray-400 mb-4" />
+                <div className="text-gray-700 font-medium mb-2">地图配置错误</div>
+                <div className="text-gray-400 text-sm text-center max-w-xs">
+                  请确保已设置 <code className="bg-gray-100 px-1 rounded">AMAP_JS_API_KEY</code> 和 <code className="bg-gray-100 px-1 rounded">AMAP_SECURITY_CODE</code>
+                </div>
+                <Button variant="outline" className="mt-4" onClick={onBack}>返回</Button>
+              </>
+            ) : (
+              <div className="animate-pulse flex flex-col items-center">
+                <MapPin className="w-10 h-10 text-red-500 mb-4" />
+                <div className="text-gray-500 font-medium">正在加载高德地图...</div>
+              </div>
             )}
           </div>
         </div>
+      )}
 
-        {/* Mock route line overlay */}
-        <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-30">
-          <path
-            d="M 100 200 Q 300 100 500 300 T 900 400"
-            stroke="#ef4444"
-            strokeWidth="3"
-            fill="none"
-            strokeDasharray="10 5"
-          />
-        </svg>
-      </div>
-
-      {/* Bottom Sheet - Points List */}
-      <div className="bg-white border-t border-gray-200 max-h-[40vh] overflow-y-auto">
-        <div className="max-w-screen-xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-gray-900">
-              {selectedDay === 0 ? '全部点位' : `Day ${selectedDay} 点位`}
-            </h3>
-            <Badge variant="outline">
-              {filteredPoints.length} 个地点
-            </Badge>
-          </div>
-
-          <div className="space-y-2">
-            {filteredPoints.map((point, index) => (
-              <div
-                key={point.id}
-                draggable
-                onDragStart={(e) => handleDragStart(e, point.id)}
-                onDragOver={handleDragOver}
-                onDrop={(e) => handleDrop(e, point.id)}
-                className={`bg-gray-50 rounded-xl p-3 flex items-center gap-3 cursor-move hover:bg-gray-100 transition-colors ${
-                  draggedItem === point.id ? 'opacity-50' : ''
-                }`}
-              >
-                {/* Drag Handle */}
-                <GripVertical className="w-5 h-5 text-gray-400 flex-shrink-0" />
-
-                {/* Order Number */}
-                <div className={`w-8 h-8 ${getPointColor(point.type)} rounded-full flex items-center justify-center text-white flex-shrink-0`}>
-                  {index + 1}
-                </div>
-
-                {/* Info */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-lg">{getPointIcon(point.type)}</span>
-                    <span className="text-gray-900 truncate">{point.name}</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-gray-500">
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      {point.time}
-                    </span>
-                    {point.price && (
-                      <span className="flex items-center gap-1">
-                        <DollarSign className="w-3 h-3" />
-                        {point.price}
-                      </span>
-                    )}
-                    <Badge variant="outline" className="text-xs">
-                      Day {point.day}
-                    </Badge>
-                  </div>
-                </div>
-
-                {/* Navigate Button */}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleNavigate(point)}
-                  className="flex-shrink-0"
-                >
-                  <Navigation className="w-4 h-4" />
-                </Button>
-              </div>
-            ))}
-          </div>
-
-          {filteredPoints.length === 0 && (
-            <div className="text-center py-12 text-gray-400">
-              <MapPin className="w-12 h-12 mx-auto mb-2" />
-              <p>该天暂无点位</p>
+      {/* Top Nav - Only when map is visible */}
+      {!selectedLocation && mapLoaded && (
+        <div className="absolute top-0 left-0 right-0 z-40 bg-gradient-to-b from-black/40 to-transparent">
+          <div className="px-4 pt-12 pb-3 flex items-center justify-between">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="rounded-full bg-white/20 backdrop-blur-md hover:bg-white/40 text-white"
+              onClick={onBack}
+            >
+              <ChevronLeft className="w-6 h-6" />
+            </Button>
+            <div className="text-white font-semibold text-base drop-shadow">
+              {zoomLevel < ZOOM_THRESHOLD ? '城市概览' : '探索地点'}
             </div>
-          )}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="rounded-full bg-white/20 backdrop-blur-md hover:bg-white/40 text-white"
+            >
+              <Search className="w-5 h-5" />
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Detail View Overlay */}
+      <AnimatePresence>
+        {selectedLocation && (
+          <motion.div
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+            className="absolute inset-0 z-50 flex flex-col"
+          >
+            {detailLoading ? (
+              /* Loading State - Image 4 */
+              <div className="flex-1 bg-red-50/60 flex flex-col items-center justify-start pt-20">
+                {/* Spinner */}
+                <div className="relative w-14 h-14 mb-4">
+                  <svg className="animate-spin" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="28" cy="28" r="24" stroke="#fecdd3" strokeWidth="4" />
+                    <path
+                      d="M52 28a24 24 0 0 0-24-24"
+                      stroke="#ef4444"
+                      strokeWidth="4"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </div>
+                <div className="text-gray-800 font-semibold text-lg">馆子信息载入中...</div>
+
+                {/* Bottom Map Button */}
+                <div className="absolute bottom-24 left-1/2 -translate-x-1/2 flex flex-col items-center">
+                  <button
+                    onClick={closeDetail}
+                    className="w-16 h-16 rounded-full bg-gradient-to-br from-red-500 to-pink-500 flex items-center justify-center shadow-lg shadow-red-200 border-4 border-white"
+                  >
+                    <MapIcon className="w-7 h-7 text-white" />
+                  </button>
+                  <span className="text-sm text-gray-600 mt-2 font-medium">地图</span>
+                  <span className="text-xs text-gray-400 mt-0.5">返回地图</span>
+                </div>
+              </div>
+            ) : (
+              /* Detail Content - Image 3 */
+              <div className="flex-1 bg-white overflow-y-auto">
+                {/* Header Section */}
+                <div className="px-5 pt-14 pb-5 bg-gradient-to-b from-red-50 to-white">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <h1 className="text-2xl font-bold text-gray-900 mb-4">{selectedLocation.name}</h1>
+                      <div className="flex items-center gap-1 text-gray-500 text-sm mb-1">
+                        <MapPin className="w-3.5 h-3.5 text-red-500" />
+                        <span>{selectedLocation.city} · {selectedLocation.district}</span>
+                      </div>
+                      <div className="text-gray-800 font-medium text-base mb-3">
+                        {selectedLocation.address}
+                      </div>
+                      <div className="flex items-center gap-1 text-gray-500 text-sm">
+                        <Navigation className="w-3.5 h-3.5 text-red-500" />
+                        <span>距我 {selectedLocation.distance} 公里</span>
+                      </div>
+                    </div>
+
+                    {/* Right side actions */}
+                    <div className="flex flex-col items-center gap-4 ml-4">
+                      {/* Dianping Icon */}
+                      <button
+                        className="flex flex-col items-center"
+                        onClick={() => toast.success('即将跳转大众点评')}
+                      >
+                        <div className="w-12 h-12 rounded-full bg-red-500 flex items-center justify-center shadow-md">
+                          <ExternalLink className="w-5 h-5 text-white" />
+                        </div>
+                        <span className="text-xs text-gray-500 mt-1">大众点评</span>
+                      </button>
+
+                      {/* Favorite */}
+                      <button
+                        className="flex flex-col items-center"
+                        onClick={() => {
+                          setIsFavorited(!isFavorited);
+                          toast.success(isFavorited ? '已取消收藏' : '已加入收藏');
+                        }}
+                      >
+                        <div className={`w-12 h-12 rounded-full flex items-center justify-center shadow-md border ${isFavorited ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
+                          <Heart className={`w-5 h-5 ${isFavorited ? 'text-red-500 fill-red-500' : 'text-gray-400'}`} />
+                        </div>
+                        <span className="text-xs text-gray-500 mt-1">收藏</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Divider */}
+                <div className="h-2 bg-gray-50" />
+
+                {/* Videos Section */}
+                {selectedLocation.videos.length > 0 && (
+                  <div className="px-5 py-5">
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="w-6 h-6 rounded bg-red-100 flex items-center justify-center">
+                        <Play className="w-3.5 h-3.5 text-red-500 fill-red-500" />
+                      </div>
+                      <h2 className="text-lg font-bold text-gray-900">探店视频</h2>
+                    </div>
+
+                    <div className="flex flex-col gap-4">
+                      {selectedLocation.videos.map((video, idx) => (
+                        <div
+                          key={idx}
+                          className="flex gap-3 p-3 bg-gray-50 rounded-xl hover:bg-red-50 transition-colors cursor-pointer"
+                          onClick={() => toast.success('即将播放视频')}
+                        >
+                          {/* Thumbnail */}
+                          <div className="relative w-28 h-20 rounded-lg overflow-hidden flex-shrink-0">
+                            <img
+                              src={video.thumbnail}
+                              alt={video.title}
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
+                              <div className="w-8 h-8 rounded-full bg-white/80 flex items-center justify-center">
+                                <Play className="w-4 h-4 text-gray-800 fill-gray-800 ml-0.5" />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Video Info */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-2">
+                              <img
+                                src={video.authorAvatar}
+                                alt={video.authorName}
+                                className="w-5 h-5 rounded-full object-cover"
+                              />
+                              <span className="text-xs text-gray-600 font-medium">{video.authorName}</span>
+                              <span className="text-xs text-gray-400">{video.date}</span>
+                              {/* Platform icon */}
+                              <div className={`w-4 h-4 rounded-full flex items-center justify-center ${video.platform === 'douyin' ? 'bg-black' : 'bg-red-500'}`}>
+                                <span className="text-white text-[8px] font-bold">
+                                  {video.platform === 'douyin' ? '抖' : '红'}
+                                </span>
+                              </div>
+                            </div>
+                            <p className="text-sm text-gray-800 line-clamp-2 leading-snug">
+                              {video.title}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Recommendations Section */}
+                {selectedLocation.articles.length > 0 && (
+                  <>
+                    <div className="h-2 bg-gray-50" />
+                    <div className="px-5 py-5">
+                      <div className="flex items-center gap-2 mb-4">
+                        <div className="w-6 h-6 rounded bg-red-500 flex items-center justify-center">
+                          <span className="text-white text-[10px] font-bold">红</span>
+                        </div>
+                        <h2 className="text-lg font-bold text-gray-900">相关推荐文章</h2>
+                        <span className="text-xs text-gray-400 ml-auto">来自小红书</span>
+                      </div>
+                      <div className="flex flex-col gap-3">
+                        {selectedLocation.articles.map((article, idx) => (
+                          <a
+                            key={idx}
+                            href={article.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex gap-3 p-3 bg-red-50/60 rounded-xl hover:bg-red-50 transition-colors cursor-pointer group"
+                          >
+                            {/* Article Cover */}
+                            <div className="relative w-24 h-24 rounded-lg overflow-hidden flex-shrink-0">
+                              <img
+                                src={article.cover}
+                                alt={article.title}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              />
+                              <div className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-red-500 flex items-center justify-center">
+                                <span className="text-white text-[7px] font-bold">红</span>
+                              </div>
+                            </div>
+
+                            {/* Article Info */}
+                            <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
+                              <p className="text-sm font-semibold text-gray-900 line-clamp-2 leading-snug group-hover:text-red-600 transition-colors">
+                                {article.title}
+                              </p>
+                              <div className="flex items-center justify-between mt-2">
+                                <div className="flex items-center gap-1.5">
+                                  <img
+                                    src={article.authorAvatar}
+                                    alt={article.authorName}
+                                    className="w-5 h-5 rounded-full object-cover border border-red-200"
+                                  />
+                                  <span className="text-xs text-gray-500">{article.authorName}</span>
+                                </div>
+                                <div className="flex items-center gap-1 text-xs text-gray-400">
+                                  <Heart className="w-3 h-3" />
+                                  <span>{article.likes >= 1000 ? `${(article.likes / 1000).toFixed(1)}k` : article.likes}</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 mt-1">
+                                <ExternalLink className="w-3 h-3 text-red-400" />
+                                <span className="text-[11px] text-red-400">打开小红书查看</span>
+                              </div>
+                            </div>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* Bottom spacer for the map button */}
+                <div className="h-32" />
+
+                {/* Bottom Map Button */}
+                <div className="fixed bottom-16 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center">
+                  <button
+                    onClick={closeDetail}
+                    className="w-16 h-16 rounded-full bg-gradient-to-br from-red-500 to-pink-500 flex items-center justify-center shadow-lg shadow-red-300/50 border-4 border-white active:scale-95 transition-transform"
+                  >
+                    <MapIcon className="w-7 h-7 text-white" />
+                  </button>
+                  <span className="text-sm text-gray-600 mt-1.5 font-medium bg-white/80 px-3 py-0.5 rounded-full backdrop-blur-sm">地图</span>
+                  <span className="text-xs text-gray-400 mt-0.5">返回地图</span>
+                </div>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Export Buttons - floating on map */}
+      {!selectedLocation && mapLoaded && (
+        <div className="absolute bottom-8 right-4 z-40 flex flex-col items-end gap-2">
+          <AnimatePresence>
+            {showExportMenu && (
+              <motion.div
+                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                transition={{ duration: 0.2 }}
+                className="flex flex-col gap-2 mb-2"
+              >
+                {/* Export to AMap */}
+                <button
+                  onClick={exportToAMap}
+                  className="flex items-center gap-2.5 bg-white rounded-xl px-4 py-3 shadow-lg border border-gray-100 hover:bg-blue-50 active:scale-95 transition-all"
+                >
+                  <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center flex-shrink-0">
+                    <MapIcon className="w-4 h-4 text-white" />
+                  </div>
+                  <div className="text-left">
+                    <div className="text-sm font-semibold text-gray-900">导出到高德地图</div>
+                    <div className="text-[11px] text-gray-400">在高德地图中打开路线</div>
+                  </div>
+                </button>
+
+                {/* Export to Google Maps */}
+                <button
+                  onClick={exportToGoogleMaps}
+                  className="flex items-center gap-2.5 bg-white rounded-xl px-4 py-3 shadow-lg border border-gray-100 hover:bg-green-50 active:scale-95 transition-all"
+                >
+                  <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
+                    <Navigation className="w-4 h-4 text-white" />
+                  </div>
+                  <div className="text-left">
+                    <div className="text-sm font-semibold text-gray-900">导出到谷歌地图</div>
+                    <div className="text-[11px] text-gray-400">在 Google Maps 中打开路线</div>
+                  </div>
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Export toggle button */}
+          <button
+            onClick={() => setShowExportMenu(!showExportMenu)}
+            className={`w-14 h-14 rounded-full flex items-center justify-center shadow-lg border-2 border-white active:scale-95 transition-all ${
+              showExportMenu ? 'bg-gray-700 rotate-45' : 'bg-gradient-to-br from-red-500 to-pink-500'
+            }`}
+          >
+            <Share2 className="w-6 h-6 text-white" />
+          </button>
+        </div>
+      )}
+
+      {/* Route Legend - floating on map */}
+      {!selectedLocation && mapLoaded && (
+        <div className="absolute bottom-8 left-4 z-40 bg-white/90 backdrop-blur-sm rounded-xl px-3 py-2.5 shadow-lg border border-gray-100">
+          <div className="text-xs font-semibold text-gray-700 mb-1.5">行程路线</div>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center">
+                <span className="text-white text-[9px] font-bold">起</span>
+              </div>
+              <span className="text-[11px] text-gray-600">出发地</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 rounded-full bg-red-500 flex items-center justify-center">
+                <span className="text-white text-[9px] font-bold">2</span>
+              </div>
+              <span className="text-[11px] text-gray-600">途经点</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 rounded-full bg-purple-600 flex items-center justify-center">
+                <span className="text-white text-[9px] font-bold">终</span>
+              </div>
+              <span className="text-[11px] text-gray-600">终点</span>
+            </div>
+            <div className="flex items-center gap-2 mt-0.5">
+              <div className="w-5 flex items-center justify-center">
+                <div className="w-4 border-t-2 border-dashed border-red-400" />
+              </div>
+              <span className="text-[11px] text-gray-600">行程路线</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hide Scrollbar Style */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      `}} />
     </div>
   );
 }
