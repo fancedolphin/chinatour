@@ -27,7 +27,8 @@
       "mcp__linear__save_issue",
       "Bash(find:*)",
       "mcp__linear-server__list_teams",
-      "mcp__linear-server__list_issues"
+      "mcp__linear-server__list_issues",
+      "Bash(sed:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

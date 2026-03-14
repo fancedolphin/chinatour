@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { ChevronLeft, MapPin, Navigation, Heart, Search, Map as MapIcon, Play, ExternalLink, BookOpen, Share2 } from 'lucide-react';
+import { ChevronLeft, MapPin, Navigation, Heart, Search, Map as MapIcon, Play, ExternalLink, Share2 } from 'lucide-react';
+import { tripMapService } from '@/services/tripMapService';
 import { Button } from './ui/button';
 import { toast } from 'sonner@2.0.3';
 import { motion, AnimatePresence } from 'motion/react';
@@ -62,135 +63,6 @@ interface TripMapPageProps {
   onBack: () => void;
 }
 
-// --- Mock Data ---
-const AVATAR_1 = 'https://images.unsplash.com/photo-1603954698693-b0bcbceb5ad0?auto=format&fit=crop&q=80&w=100&h=100';
-const AVATAR_2 = 'https://images.unsplash.com/photo-1650546321048-b34b6c9ad5e4?auto=format&fit=crop&q=80&w=100&h=100';
-const AVATAR_3 = 'https://images.unsplash.com/photo-1708010265439-24cb8d71ae50?auto=format&fit=crop&q=80&w=100&h=100';
-const AVATAR_4 = 'https://images.unsplash.com/photo-1769961982483-c24e7ff7a131?auto=format&fit=crop&q=80&w=100&h=100';
-
-const MOCK_LOCATIONS: LocationPoint[] = [
-  {
-    id: '1', name: '宫宴', city: '北京市', district: '东城区',
-    address: '前门大街50号', lat: 39.8998, lng: 116.3975, distance: '8031.0',
-    type: 'restaurant',
-    order: 1,
-    articles: [
-      { title: '北京宫廷宴体验', cover: 'https://images.unsplash.com/photo-1746243044880-4b71e10be164?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_4, authorName: '特别乌啦啦', likes: 1200, url: 'https://www.xiaohongshu.com/explore/item/645678901234567890' },
-      { title: '北京最豪华的宫廷宴', cover: 'https://images.unsplash.com/photo-1742315035520-6eeea1463303?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_1, authorName: '真探唐仁杰', likes: 800, url: 'https://www.xiaohongshu.com/explore/item/645678901234567891' },
-    ],
-    videos: [
-      {
-        thumbnail: 'https://images.unsplash.com/photo-1746243044880-4b71e10be164?auto=format&fit=crop&q=80&w=300',
-        authorAvatar: AVATAR_4, authorName: '特别乌啦啦',
-        date: '2025-04-30', platform: 'douyin',
-        title: '花498元在北京参加「宫廷宴会」～当太子的感觉实在是爽',
-      },
-      {
-        thumbnail: 'https://images.unsplash.com/photo-1742315035520-6eeea1463303?auto=format&fit=crop&q=80&w=300',
-        authorAvatar: AVATAR_1, authorName: '真探唐仁杰',
-        date: '2025-03-15', platform: 'douyin',
-        title: '北京最豪华的宫廷宴！一桌下来人均不到300？',
-      },
-    ],
-  },
-  {
-    id: '2', name: '祥云轩', city: '北京市', district: '西城区',
-    address: '西单大悦城8层', lat: 39.9087, lng: 116.3748, distance: '8030.6',
-    type: 'restaurant',
-    order: 2,
-    articles: [
-      { title: '西单粤菜推荐', cover: 'https://images.unsplash.com/photo-1767298113547-11e95951608b?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_1, authorName: '真探唐仁杰', likes: 500, url: 'https://www.xiaohongshu.com/explore/item/645678901234567892' },
-    ],
-    videos: [
-      {
-        thumbnail: 'https://images.unsplash.com/photo-1767298113547-11e95951608b?auto=format&fit=crop&q=80&w=300',
-        authorAvatar: AVATAR_1, authorName: '真探唐仁杰',
-        date: '2025-05-10', platform: 'xiaohongshu',
-        title: '西单这家粤菜真的绝了！环境好味道也很棒',
-      },
-    ],
-  },
-  {
-    id: '3', name: '故宫博物院', city: '北京市', district: '东城区',
-    address: '景山前街4号', lat: 39.9163, lng: 116.3972, distance: '8029.5',
-    type: 'attraction',
-    order: 3,
-    articles: [
-      { title: '故宫拍照攻略', cover: 'https://images.unsplash.com/photo-1718749742771-d33cd3719fab?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_2, authorName: '旅行小王子', likes: 1500, url: 'https://www.xiaohongshu.com/explore/item/645678901234567893' },
-      { title: '故宫必去景点', cover: 'https://images.unsplash.com/photo-1718749742771-d33cd3719fab?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_3, authorName: '探店小花', likes: 1000, url: 'https://www.xiaohongshu.com/explore/item/645678901234567894' },
-    ],
-    videos: [
-      {
-        thumbnail: 'https://images.unsplash.com/photo-1718749742771-d33cd3719fab?auto=format&fit=crop&q=80&w=300',
-        authorAvatar: AVATAR_2, authorName: '旅行小王子',
-        date: '2025-04-20', platform: 'xiaohongshu',
-        title: '故宫拍照攻略！这些机位出片率100%',
-      },
-    ],
-  },
-  {
-    id: '4', name: '南锣鼓巷', city: '北京市', district: '东城区',
-    address: '南锣鼓巷胡同', lat: 39.9375, lng: 116.4027, distance: '8028.3',
-    type: 'attraction',
-    order: 4,
-    articles: [
-      { title: '南锣鼓巷探店', cover: 'https://images.unsplash.com/photo-1772764058009-e6cb2203d773?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_3, authorName: '探店小花', likes: 700, url: 'https://www.xiaohongshu.com/explore/item/645678901234567895' },
-    ],
-    videos: [
-      {
-        thumbnail: 'https://images.unsplash.com/photo-1772764058009-e6cb2203d773?auto=format&fit=crop&q=80&w=300',
-        authorAvatar: AVATAR_3, authorName: '探店小花',
-        date: '2025-05-01', platform: 'douyin',
-        title: '南锣鼓巷这条胡同太有感觉了！',
-      },
-    ],
-  },
-  {
-    id: '5', name: '天津之眼', city: '天津市', district: '河北区',
-    address: '三岔河口永乐桥上', lat: 39.1467, lng: 117.1734, distance: '8120.0',
-    type: 'attraction',
-    order: 5,
-    articles: [
-      { title: '天津之眼夜景', cover: 'https://images.unsplash.com/photo-1758642064140-cb97bb65582c?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_2, authorName: '旅行小王子', likes: 1300, url: 'https://www.xiaohongshu.com/explore/item/645678901234567896' },
-    ],
-    videos: [
-      {
-        thumbnail: 'https://images.unsplash.com/photo-1758642064140-cb97bb65582c?auto=format&fit=crop&q=80&w=300',
-        authorAvatar: AVATAR_2, authorName: '旅行小王子',
-        date: '2025-04-10', platform: 'douyin',
-        title: '天津之眼的夜景太美了！必打卡',
-      },
-    ],
-  },
-  {
-    id: '6', name: '煎饼果子老店', city: '天津市', district: '和平区',
-    address: '南市食品街内', lat: 39.1255, lng: 117.1902, distance: '8121.5',
-    type: 'restaurant',
-    order: 6,
-    articles: [
-      { title: '天津煎饼果子', cover: 'https://images.unsplash.com/photo-1723688743324-d971fc428621?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_1, authorName: '真探唐仁杰', likes: 600, url: 'https://www.xiaohongshu.com/explore/item/645678901234567897' },
-      { title: '天津煎饼果子体验', cover: 'https://images.unsplash.com/photo-1723688743324-d971fc428621?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_4, authorName: '特别乌啦啦', likes: 400, url: 'https://www.xiaohongshu.com/explore/item/645678901234567898' },
-    ],
-    videos: [
-      {
-        thumbnail: 'https://images.unsplash.com/photo-1723688743324-d971fc428621?auto=format&fit=crop&q=80&w=300',
-        authorAvatar: AVATAR_1, authorName: '真探唐仁杰',
-        date: '2025-03-28', platform: 'xiaohongshu',
-        title: '天津最正宗的煎饼果子在这里！排队一小时也值',
-      },
-    ],
-  },
-  {
-    id: '7', name: '三河古镇', city: '廊坊市', district: '三河市',
-    address: '三河市中心区', lat: 39.9830, lng: 117.0780, distance: '8050.0',
-    type: 'attraction',
-    order: 7,
-    articles: [
-      { title: '三河古镇探店', cover: 'https://images.unsplash.com/photo-1772764058009-e6cb2203d773?auto=format&fit=crop&q=80&w=300', authorAvatar: AVATAR_3, authorName: '探店小花', likes: 500, url: 'https://www.xiaohongshu.com/explore/item/645678901234567899' },
-    ],
-    videos: [],
-  },
-];
 
 // Build city clusters from locations
 function buildClusters(locations: LocationPoint[]): CityCluster[] {
@@ -210,12 +82,14 @@ function buildClusters(locations: LocationPoint[]): CityCluster[] {
   return clusters;
 }
 
-const CITY_CLUSTERS = buildClusters(MOCK_LOCATIONS);
 const ZOOM_THRESHOLD = 11;
 const AMAP_SCRIPT_SELECTOR = 'script[data-amap-sdk-version="1.4.15"]';
 
 // --- Main Component ---
 export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
+  const [locations, setLocations] = useState<LocationPoint[]>([]);
+  const [locationsLoading, setLocationsLoading] = useState(true);
+  const [locationsError, setLocationsError] = useState<string | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
   const [zoomLevel, setZoomLevel] = useState(8);
@@ -229,6 +103,16 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
   const polylinesRef = useRef<any[]>([]);
   const stepMarkersRef = useRef<any[]>([]);
   const [showExportMenu, setShowExportMenu] = useState(false);
+
+  // Load locations from DB
+  useEffect(() => {
+    setLocationsLoading(true);
+    setLocationsError(null);
+    tripMapService.getLocationsByTripId(tripId)
+      .then(data => setLocations(data))
+      .catch(err => setLocationsError(err.message))
+      .finally(() => setLocationsLoading(false));
+  }, [tripId]);
 
   // Load AMap Script
   useEffect(() => {
@@ -368,7 +252,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     // Only redraw if not already drawn
     if (polylinesRef.current.length > 0) return;
 
-    const sorted = [...MOCK_LOCATIONS].sort((a, b) => a.order - b.order);
+    const sorted = [...locations].sort((a, b) => a.order - b.order);
     if (sorted.length < 2) return;
 
     const path = sorted.map(loc => new window.AMap.LngLat(loc.lng, loc.lat));
@@ -389,14 +273,14 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     } catch (e) {
       console.warn('Polyline failed', e);
     }
-  }, []);
+  }, [locations]);
 
   // Render numbered step markers (only when zoomed in)
   const renderStepMarkers = useCallback(() => {
     if (!mapRef.current || !window.AMap) return;
     clearStepMarkers();
 
-    const sorted = [...MOCK_LOCATIONS].sort((a, b) => a.order - b.order);
+    const sorted = [...locations].sort((a, b) => a.order - b.order);
 
     sorted.forEach((loc) => {
       const isFirst = loc.order === 1;
@@ -423,18 +307,19 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
         stepMarkersRef.current.push(marker);
       } catch {}
     });
-  }, [clearStepMarkers]);
+  }, [locations, clearStepMarkers]);
 
   // Render polyline once map loads (always visible)
   useEffect(() => {
-    if (!mapRef.current || !window.AMap || !mapLoaded) return;
+    if (!mapRef.current || !window.AMap || !mapLoaded || locationsLoading) return;
     if (selectedLocation) return;
+    clearRoute();
     renderRoutePolyline();
-  }, [mapLoaded, selectedLocation, renderRoutePolyline]);
+  }, [mapLoaded, locations, locationsLoading, selectedLocation, clearRoute, renderRoutePolyline]);
 
   // Show/hide step markers based on zoom level
   useEffect(() => {
-    if (!mapRef.current || !window.AMap || !mapLoaded) return;
+    if (!mapRef.current || !window.AMap || !mapLoaded || locationsLoading) return;
     if (selectedLocation) return;
 
     if (zoomLevel >= ZOOM_THRESHOLD) {
@@ -442,11 +327,11 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     } else {
       clearStepMarkers();
     }
-  }, [zoomLevel, mapLoaded, selectedLocation, renderStepMarkers, clearStepMarkers]);
+  }, [zoomLevel, mapLoaded, locations, locationsLoading, selectedLocation, renderStepMarkers, clearStepMarkers]);
 
   // Export to AMap App
   const exportToAMap = useCallback(() => {
-    const sorted = [...MOCK_LOCATIONS].sort((a, b) => a.order - b.order);
+    const sorted = [...locations].sort((a, b) => a.order - b.order);
     if (sorted.length === 0) return;
     // AMap URI scheme: multi-destination driving
     const start = sorted[0];
@@ -462,11 +347,11 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     window.open(url, '_blank');
     toast.success('正在打开高德地图...');
     setShowExportMenu(false);
-  }, []);
+  }, [locations]);
 
   // Export to Google Maps
   const exportToGoogleMaps = useCallback(() => {
-    const sorted = [...MOCK_LOCATIONS].sort((a, b) => a.order - b.order);
+    const sorted = [...locations].sort((a, b) => a.order - b.order);
     if (sorted.length === 0) return;
     const start = sorted[0];
     const end = sorted[sorted.length - 1];
@@ -481,14 +366,14 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     window.open(url, '_blank');
     toast.success('正在打开 Google Maps...');
     setShowExportMenu(false);
-  }, []);
+  }, [locations]);
 
   // Render cluster markers (zoomed out)
   const renderClusters = useCallback(() => {
     if (!mapRef.current || !window.AMap) return;
     clearMarkers();
 
-    CITY_CLUSTERS.forEach(cluster => {
+    buildClusters(locations).forEach(cluster => {
       const el = document.createElement('div');
       el.style.cssText = 'display:flex;flex-direction:column;align-items:center;cursor:pointer;';
       el.innerHTML = `
@@ -517,7 +402,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
         console.warn('Cluster marker failed', e);
       }
     });
-  }, [clearMarkers]);
+  }, [locations, clearMarkers]);
 
   // Render individual location markers (zoomed in)
   const renderLocationMarkers = useCallback(() => {
@@ -526,7 +411,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
 
     // Only show locations in the current viewport
     const bounds = mapRef.current.getBounds();
-    const visibleLocations = MOCK_LOCATIONS.filter(loc => {
+    const visibleLocations = locations.filter(loc => {
       if (!bounds) return true;
       try {
         const ne = bounds.getNorthEast();
@@ -581,7 +466,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     });
 
     // Also add small pin markers
-    MOCK_LOCATIONS.forEach(loc => {
+    locations.forEach(loc => {
       const pinEl = document.createElement('div');
       pinEl.innerHTML = `
         <div style="width:12px;height:12px;background:#ef4444;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>
@@ -597,11 +482,11 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
         markersRef.current.push(pin);
       } catch {}
     });
-  }, [clearMarkers]);
+  }, [locations, clearMarkers]);
 
   // Update markers based on zoom level
   useEffect(() => {
-    if (!mapRef.current || !window.AMap) return;
+    if (!mapRef.current || !window.AMap || locationsLoading) return;
     if (selectedLocation) return; // Don't update markers when detail view is open
 
     if (zoomLevel < ZOOM_THRESHOLD) {
@@ -609,7 +494,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     } else {
       renderLocationMarkers();
     }
-  }, [zoomLevel, mapLoaded, selectedLocation, renderClusters, renderLocationMarkers]);
+  }, [zoomLevel, mapLoaded, locations, locationsLoading, selectedLocation, renderClusters, renderLocationMarkers]);
 
   // Open location detail with loading animation
   const openLocationDetail = useCallback((loc: LocationPoint) => {
@@ -655,6 +540,37 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                 <div className="text-gray-500 font-medium">正在加载高德地图...</div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Locations Loading Overlay */}
+      {mapLoaded && locationsLoading && !selectedLocation && (
+        <div className="absolute top-24 left-1/2 -translate-x-1/2 z-20 bg-white/90 backdrop-blur-sm rounded-full px-4 py-2 shadow-md flex items-center gap-2">
+          <div className="w-4 h-4 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
+          <span className="text-sm text-gray-600 font-medium">正在加载地点...</span>
+        </div>
+      )}
+
+      {/* Locations Error Overlay */}
+      {mapLoaded && locationsError && !selectedLocation && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-2xl p-6 mx-6 flex flex-col items-center shadow-xl">
+            <MapPin className="w-10 h-10 text-gray-400 mb-3" />
+            <div className="text-gray-800 font-semibold mb-1">加载地点失败</div>
+            <div className="text-gray-500 text-sm text-center mb-4">{locationsError}</div>
+            <Button
+              onClick={() => {
+                setLocationsError(null);
+                setLocationsLoading(true);
+                tripMapService.getLocationsByTripId(tripId)
+                  .then(data => setLocations(data))
+                  .catch(err => setLocationsError(err.message))
+                  .finally(() => setLocationsLoading(false));
+              }}
+            >
+              重试
+            </Button>
           </div>
         </div>
       )}
