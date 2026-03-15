@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Calendar, MapPin, Clock, ChevronRight, Share2, Trash2, Loader2, MessageSquare, Globe, GitFork } from 'lucide-react';
+import { Plus, Calendar, MapPin, Clock, ChevronRight, Share2, Trash2, Loader2, MessageSquare, Globe, Download } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -81,15 +81,11 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
     try {
       setLoading(true);
       setError(null);
-      const data = await tripService.getUserTrips(currentUser!.id);
-      // 批量检查哪些行程已发布
-      const publishedSet = new Set<string>();
-      await Promise.all(
-        data.map(async (dbTrip) => {
-          const published = await sharedTripService.isPublished(dbTrip.id);
-          if (published) publishedSet.add(dbTrip.id);
-        })
-      );
+      const [data, myShared] = await Promise.all([
+        tripService.getUserTrips(currentUser!.id),
+        sharedTripService.getMySharedTrips(currentUser!.id),
+      ]);
+      const publishedSet = new Set(myShared.map((s) => s.trip_id));
       const mappedTrips: Trip[] = data.map((dbTrip: DBTrip) => ({
         id: dbTrip.id,
         destination: dbTrip.destination,
@@ -272,8 +268,8 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
                 <div className="absolute top-3 left-3 flex flex-col gap-1">
                   {getStatusBadge(trip.status)}
                   {trip.source === 'forked' && (
-                    <Badge className="bg-purple-500 flex items-center gap-1 w-fit">
-                      <GitFork className="w-3 h-3" />
+                    <Badge variant="outline" className="text-blue-500 border-blue-200 bg-white flex items-center gap-1 w-fit text-xs">
+                      <Download className="w-3 h-3" />
                       从广场导入
                     </Badge>
                   )}
@@ -348,7 +344,7 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
                       e.stopPropagation();
                       onContinueChat?.(trip.id);
                     }}
-                    title="继续与AI对话"
+                    title={trip.source === 'forked' ? '继续修改' : '继续与AI对话'}
                   >
                     <MessageSquare className="w-4 h-4 text-blue-500" />
                   </Button>
@@ -374,7 +370,7 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
                     className="flex-1 bg-red-500 hover:bg-red-600"
                     onClick={() => handleViewDetail(trip.id)}
                   >
-                    继续规划
+                    {trip.source === 'forked' ? '继续修改' : '继续规划'}
                     <ChevronRight className="w-4 h-4 ml-1" />
                   </Button>
                 </div>
@@ -405,10 +401,16 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
           tripId={publishTrip.id}
           tripDestination={publishTrip.destination}
           userId={currentUser!.id}
+          alreadyPublished={publishTrip.isPublished}
           onClose={() => setPublishTrip(null)}
           onPublished={() => {
             setTrips((prev) =>
               prev.map((t) => (t.id === publishTrip.id ? { ...t, isPublished: true } : t))
+            );
+          }}
+          onUnpublished={() => {
+            setTrips((prev) =>
+              prev.map((t) => (t.id === publishTrip.id ? { ...t, isPublished: false } : t))
             );
           }}
         />

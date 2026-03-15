@@ -119,6 +119,23 @@ export const sharedTripService = {
   },
 
   /**
+   * 获取当前用户已发布的行程列表（批量，替代 N 次 isPublished 调用）
+   */
+  async getMySharedTrips(userId: string): Promise<SharedTrip[]> {
+    const { data, error } = await supabase
+      .from('shared_trips')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('is_active', true);
+
+    if (error) {
+      console.error('[sharedTripService] 获取我的已发布行程失败:', error.message);
+      throw new Error(`Failed to get my shared trips: ${error.message}`);
+    }
+    return data ?? [];
+  },
+
+  /**
    * 发布行程到广场
    */
   async publishTrip(
@@ -204,6 +221,37 @@ export const sharedTripService = {
       .eq('is_active', true)
       .maybeSingle();
     return !!data;
+  },
+
+  /**
+   * 批量获取用户对一组 shared_trip 的互动状态
+   * 返回 Map<sharedTripId, { liked, saved }>
+   */
+  async getBatchUserInteractions(
+    sharedTripIds: string[],
+    userId: string
+  ): Promise<Map<string, { liked: boolean; saved: boolean }>> {
+    if (sharedTripIds.length === 0) return new Map();
+
+    const { data, error } = await supabase
+      .from('user_interactions')
+      .select('shared_trip_id, liked, saved')
+      .eq('user_id', userId)
+      .in('shared_trip_id', sharedTripIds);
+
+    if (error) {
+      console.error('[sharedTripService] 批量获取互动状态失败:', error.message);
+      return new Map();
+    }
+
+    const result = new Map<string, { liked: boolean; saved: boolean }>();
+    for (const row of data ?? []) {
+      result.set(row.shared_trip_id, {
+        liked: row.liked ?? false,
+        saved: row.saved ?? false,
+      });
+    }
+    return result;
   },
 
   /**
