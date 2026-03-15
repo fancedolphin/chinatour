@@ -112,7 +112,7 @@ function AppContent() {
       case 'tips':
         return <TravelTipsPage />;
       case 'discover':
-        return <DestinationExplorePage />;
+        return <DestinationExplorePage onNavigateToTrips={() => setCurrentTab('trips')} />;
       case 'profile':
         return <ProfilePage userPosts={userPosts} />;
       default:

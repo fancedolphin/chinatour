@@ -1,166 +1,110 @@
-import { useState } from 'react';
-import { Search, TrendingUp, Calendar, Clock, MapPin, Heart, MessageCircle, Bookmark, Eye } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Search, TrendingUp, Calendar, Clock, MapPin, Heart, MessageCircle, Bookmark, Eye, GitFork, Loader2 } from 'lucide-react';
+import { toast } from 'sonner@2.0.3';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { useAuthContext } from '@/presentation/context/AuthContext';
+import { sharedTripService, type SharedTripCard, type SharedTripSortBy } from '@/services/sharedTripService';
 
-interface SharedTrip {
-  id: string;
-  destination: string;
-  dates: string;
-  duration: string;
-  author: {
-    name: string;
-    avatar: string;
-  };
-  image: string;
-  budget: string;
-  likes: number;
-  comments: number;
-  views: number;
-  tags: string[];
-  description: string;
-  isSaved: boolean;
+interface DestinationExplorePageProps {
+  onNavigateToTrips?: () => void;
 }
 
-export function DestinationExplorePage() {
-  const [savedTrips, setSavedTrips] = useState<string[]>([]);
-  const [likedTrips, setLikedTrips] = useState<string[]>([]);
+export function DestinationExplorePage({ onNavigateToTrips }: DestinationExplorePageProps = {}) {
+  const { currentUser } = useAuthContext();
+  const [trips, setTrips] = useState<SharedTripCard[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<SharedTripSortBy>('recommend');
+  const [savedTrips, setSavedTrips] = useState<Set<string>>(new Set());
+  const [likedTrips, setLikedTrips] = useState<Set<string>>(new Set());
+  const [forkingId, setForkingId] = useState<string | null>(null);
 
-  const sharedTrips: SharedTrip[] = [
-    {
-      id: '1',
-      destination: '伦敦 · 爱丁堡',
-      dates: '2024年10月1日 - 10月7日',
-      duration: '7天',
-      author: {
-        name: '旅行达人小红',
-        avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150',
-      },
-      image: 'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?w=800',
-      budget: '£3,500',
-      likes: 1248,
-      comments: 89,
-      views: 5621,
-      tags: ['历史文化', '博物馆', '美食'],
-      description: '7天深度游英伦，打卡大英博物馆、白金汉宫，品尝地道英式下午茶，体验浪漫爱丁堡🏰',
-      isSaved: false,
-    },
-    {
-      id: '2',
-      destination: '北京深度游',
-      dates: '2024年11月15日 - 11月17日',
-      duration: '3天',
-      author: {
-        name: '城市探索者',
-        avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150',
-      },
-      image: 'https://images.unsplash.com/photo-1677818911820-7111f3292f9b?w=800',
-      budget: '¥2,000',
-      likes: 856,
-      comments: 45,
-      views: 3240,
-      tags: ['历史古都', '美食', '胡同'],
-      description: '3天玩转北京，故宫-天坛-胡同，性价比超高的美食攻略，人均200吃遍京城！',
-      isSaved: false,
-    },
-    {
-      id: '3',
-      destination: '东京 · 京都',
-      dates: '2024年12月20日 - 12月26日',
-      duration: '7天',
-      author: {
-        name: '樱花少女',
-        avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150',
-      },
-      image: 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?w=800',
-      budget: '¥8,000',
-      likes: 2341,
-      comments: 156,
-      views: 12456,
-      tags: ['日本', '寺庙', '温泉'],
-      description: '东京现代+京都古韵，完美结合！附详细交通攻略和餐厅推荐🍣',
-      isSaved: false,
-    },
-    {
-      id: '4',
-      destination: '成都 · 重庆',
-      dates: '2024年9月10日 - 9月15日',
-      duration: '6天',
-      author: {
-        name: '辣妹子',
-        avatar: 'https://images.unsplash.com/photo-1489424731084-a5d8b219a5bb?w=150',
-      },
-      image: 'https://images.unsplash.com/photo-1633880791834-cbf3bb0b7e9e?w=800',
-      budget: '¥3,500',
-      likes: 1567,
-      comments: 234,
-      views: 8934,
-      tags: ['美食', '火锅', '熊猫'],
-      description: '吃遍川渝！超全火锅串串攻略，看熊猫，逛洪崖洞，6天5晚美食之旅🌶️',
-      isSaved: false,
-    },
-    {
-      id: '5',
-      destination: '巴黎浪漫游',
-      dates: '2024年10月15日 - 10月21日',
-      duration: '7天',
-      author: {
-        name: '浪漫主义者',
-        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-      },
-      image: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800',
-      budget: '€4,200',
-      likes: 3124,
-      comments: 198,
-      views: 15678,
-      tags: ['浪漫', '艺术', '时尚'],
-      description: '巴黎7日游，埃菲尔铁塔日落、卢浮宫艺术、塞纳河游船，附小众咖啡店🗼',
-      isSaved: false,
-    },
-    {
-      id: '6',
-      destination: '曼彻斯特工业游',
-      dates: '2024年11月5日 - 11月8日',
-      duration: '4天',
-      author: {
-        name: '工业风爱好者',
-        avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150',
-      },
-      image: 'https://images.unsplash.com/photo-1606929934973-a1308b018950?w=800',
-      budget: '£800',
-      likes: 456,
-      comments: 34,
-      views: 2341,
-      tags: ['工业旅游', '足球', '博物馆'],
-      description: '工业革命发源地，打卡科学工业博物馆，老特拉福德球场朝圣⚽',
-      isSaved: false,
-    },
-  ];
+  const trendingSearches = ['十一假期', '东北性价比游', '工业旅游路线', '日本温泉', '欧洲深度游'];
 
-  const trendingSearches = [
-    '十一假期',
-    '东北性价比游',
-    '工业旅游路线',
-    '日本温泉',
-    '欧洲深度游',
-  ];
+  useEffect(() => {
+    loadTrips(sortBy);
+  }, [sortBy]);
 
-  const handleToggleSave = (tripId: string) => {
-    setSavedTrips(prev => 
-      prev.includes(tripId) 
-        ? prev.filter(id => id !== tripId)
-        : [...prev, tripId]
-    );
+  const loadTrips = async (sort: SharedTripSortBy) => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await sharedTripService.getSharedTrips(sort);
+      setTrips(data);
+    } catch (err) {
+      console.error('[DestinationExplorePage] 加载失败:', err);
+      setError(err instanceof Error ? err.message : '加载失败');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleToggleLike = (tripId: string) => {
-    setLikedTrips(prev => 
-      prev.includes(tripId) 
-        ? prev.filter(id => id !== tripId)
-        : [...prev, tripId]
-    );
+  const handleToggleLike = async (sharedTripId: string) => {
+    if (!currentUser) {
+      toast.error('请先登录');
+      return;
+    }
+    try {
+      const newLiked = await sharedTripService.toggleLike(sharedTripId, currentUser.id);
+      setLikedTrips((prev) => {
+        const next = new Set(prev);
+        newLiked ? next.add(sharedTripId) : next.delete(sharedTripId);
+        return next;
+      });
+      setTrips((prev) =>
+        prev.map((t) =>
+          t.id === sharedTripId
+            ? { ...t, likesCount: t.likesCount + (newLiked ? 1 : -1) }
+            : t
+        )
+      );
+    } catch (err) {
+      toast.error('操作失败');
+    }
+  };
+
+  const handleToggleSave = async (sharedTripId: string) => {
+    if (!currentUser) {
+      toast.error('请先登录');
+      return;
+    }
+    try {
+      const newSaved = await sharedTripService.toggleSave(sharedTripId, currentUser.id);
+      setSavedTrips((prev) => {
+        const next = new Set(prev);
+        newSaved ? next.add(sharedTripId) : next.delete(sharedTripId);
+        return next;
+      });
+    } catch (err) {
+      toast.error('操作失败');
+    }
+  };
+
+  const handleFork = async (sharedTripId: string) => {
+    if (!currentUser) {
+      toast.error('请先登录');
+      return;
+    }
+    try {
+      setForkingId(sharedTripId);
+      await sharedTripService.forkTrip(sharedTripId, currentUser.id);
+      toast.success('已导入到我的行程！');
+      onNavigateToTrips?.();
+    } catch (err) {
+      toast.error('导入失败：' + (err instanceof Error ? err.message : '未知错误'));
+    } finally {
+      setForkingId(null);
+    }
+  };
+
+  const formatDateRange = (start: string, end: string) => {
+    if (!start || !end) return '';
+    const s = new Date(start);
+    const e = new Date(end);
+    return `${s.getFullYear()}年${s.getMonth() + 1}月${s.getDate()}日 - ${e.getMonth() + 1}月${e.getDate()}日`;
   };
 
   return (
@@ -177,6 +121,7 @@ export function DestinationExplorePage() {
             />
           </div>
         </div>
+
         {/* Trending Searches */}
         <div className="bg-white rounded-xl p-4 mb-4">
           <div className="flex items-center gap-2 mb-3">
@@ -196,57 +141,83 @@ export function DestinationExplorePage() {
         </div>
 
         {/* Filter Tabs */}
-        <Tabs defaultValue="recommend" className="w-full mb-4">
+        <Tabs
+          defaultValue="recommend"
+          className="w-full mb-4"
+          onValueChange={(v) => setSortBy(v as SharedTripSortBy)}
+        >
           <TabsList className="w-full grid grid-cols-3 bg-white rounded-xl p-1">
             <TabsTrigger value="recommend">推荐</TabsTrigger>
             <TabsTrigger value="hot">最热</TabsTrigger>
             <TabsTrigger value="latest">最新</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="recommend" className="mt-4">
-            <SharedTripsList 
-              trips={sharedTrips} 
-              savedTrips={savedTrips}
-              likedTrips={likedTrips}
-              onToggleSave={handleToggleSave}
-              onToggleLike={handleToggleLike}
-            />
-          </TabsContent>
-
-          <TabsContent value="hot" className="mt-4">
-            <SharedTripsList 
-              trips={[...sharedTrips].sort((a, b) => b.likes - a.likes)} 
-              savedTrips={savedTrips}
-              likedTrips={likedTrips}
-              onToggleSave={handleToggleSave}
-              onToggleLike={handleToggleLike}
-            />
-          </TabsContent>
-
-          <TabsContent value="latest" className="mt-4">
-            <SharedTripsList 
-              trips={[...sharedTrips].reverse()} 
-              savedTrips={savedTrips}
-              likedTrips={likedTrips}
-              onToggleSave={handleToggleSave}
-              onToggleLike={handleToggleLike}
-            />
-          </TabsContent>
+          {(['recommend', 'hot', 'latest'] as const).map((tab) => (
+            <TabsContent key={tab} value={tab} className="mt-4">
+              <TripsList
+                trips={trips}
+                loading={loading}
+                error={error}
+                savedTrips={savedTrips}
+                likedTrips={likedTrips}
+                forkingId={forkingId}
+                onToggleSave={handleToggleSave}
+                onToggleLike={handleToggleLike}
+                onFork={handleFork}
+                formatDateRange={formatDateRange}
+                onRetry={() => loadTrips(sortBy)}
+              />
+            </TabsContent>
+          ))}
         </Tabs>
       </div>
     </div>
   );
 }
 
-interface SharedTripsListProps {
-  trips: SharedTrip[];
-  savedTrips: string[];
-  likedTrips: string[];
+interface TripsListProps {
+  trips: SharedTripCard[];
+  loading: boolean;
+  error: string | null;
+  savedTrips: Set<string>;
+  likedTrips: Set<string>;
+  forkingId: string | null;
   onToggleSave: (id: string) => void;
   onToggleLike: (id: string) => void;
+  onFork: (id: string) => void;
+  formatDateRange: (start: string, end: string) => string;
+  onRetry: () => void;
 }
 
-function SharedTripsList({ trips, savedTrips, likedTrips, onToggleSave, onToggleLike }: SharedTripsListProps) {
+function TripsList({
+  trips, loading, error, savedTrips, likedTrips, forkingId,
+  onToggleSave, onToggleLike, onFork, formatDateRange, onRetry,
+}: TripsListProps) {
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-8 h-8 text-red-500 animate-spin" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-gray-500 mb-4">{error}</p>
+        <Button variant="outline" onClick={onRetry}>重试</Button>
+      </div>
+    );
+  }
+
+  if (trips.length === 0) {
+    return (
+      <div className="text-center py-12 text-gray-400">
+        暂无公开行程
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       {trips.map((trip) => (
@@ -254,57 +225,63 @@ function SharedTripsList({ trips, savedTrips, likedTrips, onToggleSave, onToggle
           key={trip.id}
           className="bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow"
         >
-          {/* Author Info */}
+          {/* Author */}
           <div className="p-3 flex items-center gap-2 border-b border-gray-100">
             <ImageWithFallback
-              src={trip.author.avatar}
+              src={trip.author.avatar || ''}
               alt={trip.author.name}
               className="w-8 h-8 rounded-full object-cover"
             />
             <span className="text-sm text-gray-900">{trip.author.name}</span>
           </div>
 
-          {/* Trip Image */}
-          <div className="relative h-48 cursor-pointer group">
+          {/* Cover Image */}
+          <div className="relative h-48">
             <ImageWithFallback
-              src={trip.image}
+              src={trip.imageUrl || 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?w=800'}
               alt={trip.destination}
               className="w-full h-full object-cover"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
             <div className="absolute bottom-3 left-3 right-3">
               <h3 className="text-white mb-1">{trip.destination}</h3>
-              <p className="text-white/90 text-sm line-clamp-2">
-                {trip.description}
-              </p>
+              {trip.description && (
+                <p className="text-white/90 text-sm line-clamp-2">{trip.description}</p>
+              )}
             </div>
           </div>
 
-          {/* Trip Info */}
+          {/* Info */}
           <div className="p-4">
-            <div className="flex flex-wrap gap-2 mb-3">
-              {trip.tags.map((tag, index) => (
-                <Badge key={index} variant="secondary" className="text-xs">
-                  {tag}
-                </Badge>
-              ))}
-            </div>
+            {trip.tags && trip.tags.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-3">
+                {trip.tags.map((tag, i) => (
+                  <Badge key={i} variant="secondary" className="text-xs">{tag}</Badge>
+                ))}
+              </div>
+            )}
 
             <div className="space-y-2 mb-4">
-              <div className="flex items-center gap-2 text-sm text-gray-600">
-                <Calendar className="w-4 h-4" />
-                {trip.dates}
-              </div>
+              {trip.startDate && (
+                <div className="flex items-center gap-2 text-sm text-gray-600">
+                  <Calendar className="w-4 h-4" />
+                  {formatDateRange(trip.startDate, trip.endDate)}
+                </div>
+              )}
               <div className="flex items-center justify-between text-sm text-gray-600">
                 <div className="flex items-center gap-4">
-                  <span className="flex items-center gap-1">
-                    <Clock className="w-4 h-4" />
-                    {trip.duration}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <MapPin className="w-4 h-4" />
-                    预算：{trip.budget}
-                  </span>
+                  {trip.duration && (
+                    <span className="flex items-center gap-1">
+                      <Clock className="w-4 h-4" />
+                      {trip.duration}
+                    </span>
+                  )}
+                  {trip.budget && (
+                    <span className="flex items-center gap-1">
+                      <MapPin className="w-4 h-4" />
+                      预算：{trip.budget}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -314,42 +291,45 @@ function SharedTripsList({ trips, savedTrips, likedTrips, onToggleSave, onToggle
               <div className="flex items-center gap-4 text-xs text-gray-500">
                 <span className="flex items-center gap-1">
                   <Eye className="w-4 h-4" />
-                  {trip.views.toLocaleString()}
+                  {trip.viewsCount.toLocaleString()}
                 </span>
                 <span className="flex items-center gap-1">
                   <MessageCircle className="w-4 h-4" />
-                  {trip.comments}
+                  {trip.commentsCount}
                 </span>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 <button
                   onClick={() => onToggleLike(trip.id)}
                   className="flex items-center gap-1 text-sm transition-colors"
                 >
                   <Heart
-                    className={`w-5 h-5 ${
-                      likedTrips.includes(trip.id)
-                        ? 'fill-red-500 text-red-500'
-                        : 'text-gray-400'
-                    }`}
+                    className={`w-5 h-5 ${likedTrips.has(trip.id) ? 'fill-red-500 text-red-500' : 'text-gray-400'}`}
                   />
-                  <span className={likedTrips.includes(trip.id) ? 'text-red-500' : 'text-gray-500'}>
-                    {trip.likes + (likedTrips.includes(trip.id) ? 1 : 0)}
+                  <span className={likedTrips.has(trip.id) ? 'text-red-500' : 'text-gray-500'}>
+                    {trip.likesCount + (likedTrips.has(trip.id) ? 1 : 0)}
                   </span>
                 </button>
-                <button
-                  onClick={() => onToggleSave(trip.id)}
-                  className="transition-colors"
-                >
+                <button onClick={() => onToggleSave(trip.id)} className="transition-colors">
                   <Bookmark
-                    className={`w-5 h-5 ${
-                      savedTrips.includes(trip.id)
-                        ? 'fill-yellow-500 text-yellow-500'
-                        : 'text-gray-400'
-                    }`}
+                    className={`w-5 h-5 ${savedTrips.has(trip.id) ? 'fill-yellow-500 text-yellow-500' : 'text-gray-400'}`}
                   />
                 </button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex items-center gap-1 text-purple-600 border-purple-300 hover:bg-purple-50"
+                  onClick={() => onFork(trip.id)}
+                  disabled={forkingId === trip.id}
+                >
+                  {forkingId === trip.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <GitFork className="w-4 h-4" />
+                  )}
+                  导入行程
+                </Button>
               </div>
             </div>
           </div>
