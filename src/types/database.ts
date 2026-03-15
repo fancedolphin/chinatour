@@ -661,6 +661,7 @@ export type Database = {
           destination: string
           duration: string | null
           end_date: string
+          forked_from: string | null
           id: string
           image_url: string | null
           source: string | null
@@ -677,6 +678,7 @@ export type Database = {
           destination: string
           duration?: string | null
           end_date: string
+          forked_from?: string | null
           id?: string
           image_url?: string | null
           source?: string | null
@@ -693,6 +695,7 @@ export type Database = {
           destination?: string
           duration?: string | null
           end_date?: string
+          forked_from?: string | null
           id?: string
           image_url?: string | null
           source?: string | null
