@@ -1,53 +1,17 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { ChevronLeft, MapPin, Navigation, Heart, Search, Map as MapIcon, Play, ExternalLink, Share2 } from 'lucide-react';
-import { tripMapService } from '@/services/tripMapService';
 import { Button } from './ui/button';
 import { toast } from 'sonner@2.0.3';
 import { motion, AnimatePresence } from 'motion/react';
-import { getAmapConfig } from '@/services/amapConfigService';
+import { tripMapService } from '../services/tripMapService';
+import type { LocationPoint } from '../services/tripMapService';
 
 declare global {
   interface Window {
-    _AMapSecurityConfig?: {
-      securityJsCode: string;
-    };
-    AMap?: any;
+    _AMapSecurityConfig: any;
+    AMap: any;
     initAMap?: () => void;
   }
-}
-
-// --- Data Types ---
-interface Article {
-  title: string;
-  cover: string;
-  authorAvatar: string;
-  authorName: string;
-  likes: number;
-  url: string; // 小红书链接
-}
-
-interface Video {
-  thumbnail: string;
-  authorAvatar: string;
-  authorName: string;
-  date: string;
-  platform: 'douyin' | 'xiaohongshu';
-  title: string;
-}
-
-interface LocationPoint {
-  id: string;
-  name: string;
-  city: string;
-  district: string;
-  address: string;
-  lat: number;
-  lng: number;
-  distance: string;
-  articles: Article[];
-  videos: Video[];
-  type: 'restaurant' | 'attraction' | 'hotel';
-  order: number; // 行程顺序
 }
 
 interface CityCluster {
@@ -62,7 +26,6 @@ interface TripMapPageProps {
   tripId: string;
   onBack: () => void;
 }
-
 
 // Build city clusters from locations
 function buildClusters(locations: LocationPoint[]): CityCluster[] {
@@ -83,19 +46,17 @@ function buildClusters(locations: LocationPoint[]): CityCluster[] {
 }
 
 const ZOOM_THRESHOLD = 11;
-const AMAP_SCRIPT_SELECTOR = 'script[data-amap-sdk-version="1.4.15"]';
 
 // --- Main Component ---
 export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
-  const [locations, setLocations] = useState<LocationPoint[]>([]);
-  const [locationsLoading, setLocationsLoading] = useState(true);
-  const [locationsError, setLocationsError] = useState<string | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
   const [zoomLevel, setZoomLevel] = useState(8);
   const [selectedLocation, setSelectedLocation] = useState<LocationPoint | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [isFavorited, setIsFavorited] = useState(false);
+  const [locations, setLocations] = useState<LocationPoint[]>([]);
+  const [locationsError, setLocationsError] = useState<string | null>(null);
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
@@ -104,14 +65,15 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
   const stepMarkersRef = useRef<any[]>([]);
   const [showExportMenu, setShowExportMenu] = useState(false);
 
-  // Load locations from DB
+  // Fetch locations from database
   useEffect(() => {
-    setLocationsLoading(true);
-    setLocationsError(null);
     tripMapService.getLocationsByTripId(tripId)
-      .then(data => setLocations(data))
-      .catch(err => setLocationsError(err.message))
-      .finally(() => setLocationsLoading(false));
+      .then(setLocations)
+      .catch((err) => {
+        console.error('[TripMapPage] 加载地点失败', err);
+        setLocationsError('加载地点数据失败');
+        toast.error('加载地点数据失败');
+      });
   }, [tripId]);
 
   // Load AMap Script
@@ -121,74 +83,22 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
       return;
     }
 
-    const originalAlert = window.alert;
-    window.alert = function (message) {
-      if (typeof message === 'string' && (message.includes('USERKEY') || message.includes('AMap'))) {
-        console.warn('AMap Warning:', message);
-        return;
-      }
-      originalAlert(message);
-    };
+    const apiKey = import.meta.env.VITE_AMAP_API_KEY as string;
+    const securityCode = import.meta.env.VITE_AMAP_SECURITY_CODE as string;
 
-    let cancelled = false;
+    if (!apiKey) {
+      setConfigError('未配置高德地图 API Key');
+      return;
+    }
 
-    getAmapConfig()
-      .then((config) => {
-        if (cancelled) {
-          return;
-        }
+    window._AMapSecurityConfig = { securityJsCode: securityCode || '' };
+    window.initAMap = () => setMapLoaded(true);
 
-        if (!config?.key || !config?.securityCode) {
-          setConfigError('地图配置错误');
-          return;
-        }
-
-        window._AMapSecurityConfig = { securityJsCode: config.securityCode };
-        window.initAMap = () => {
-          if (!cancelled) {
-            setMapLoaded(true);
-            setConfigError(null);
-          }
-        };
-
-        const existingScript = document.querySelector<HTMLScriptElement>(AMAP_SCRIPT_SELECTOR);
-        if (existingScript) {
-          existingScript.addEventListener('load', window.initAMap, { once: true });
-          existingScript.addEventListener('error', () => {
-            if (!cancelled) {
-              toast.error('地图加载失败');
-              setConfigError('地图脚本加载失败');
-              setMapLoaded(false);
-            }
-          }, { once: true });
-          return;
-        }
-
-        const script = document.createElement('script');
-        script.dataset.amapSdkVersion = '1.4.15';
-        script.src = `https://webapi.amap.com/maps?v=1.4.15&key=${config.key}&callback=initAMap`;
-        script.async = true;
-        script.onerror = () => {
-          if (!cancelled) {
-            toast.error('地图加载失败');
-            setConfigError('地图脚本加载失败');
-            setMapLoaded(false);
-          }
-        };
-        document.body.appendChild(script);
-      })
-      .catch((err) => {
-        console.error('Failed to fetch AMap config:', err);
-        if (!cancelled) {
-          setConfigError('无法获取地图配置');
-        }
-      });
-
-    return () => {
-      cancelled = true;
-      window.alert = originalAlert;
-      delete window.initAMap;
-    };
+    const script = document.createElement('script');
+    script.src = `https://webapi.amap.com/maps?v=1.4.15&key=${apiKey}&callback=initAMap`;
+    script.async = true;
+    script.onerror = () => { toast.error('地图加载失败'); setConfigError('地图脚本加载失败'); };
+    document.body.appendChild(script);
   }, []);
 
   // Initialize Map
@@ -215,36 +125,21 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
 
   // Clear all markers
   const clearMarkers = useCallback(() => {
-    markersRef.current.forEach(m => { try { m.setMap(null); } catch {} });
+    markersRef.current.forEach(m => { try { m.setMap(null); } catch { } });
     markersRef.current = [];
   }, []);
 
   // Clear route overlays
   const clearRoute = useCallback(() => {
-    polylinesRef.current.forEach(p => { try { p.setMap(null); } catch {} });
+    polylinesRef.current.forEach(p => { try { p.setMap(null); } catch { } });
     polylinesRef.current = [];
   }, []);
 
   // Clear step markers only
   const clearStepMarkers = useCallback(() => {
-    stepMarkersRef.current.forEach(m => { try { m.setMap(null); } catch {} });
+    stepMarkersRef.current.forEach(m => { try { m.setMap(null); } catch { } });
     stepMarkersRef.current = [];
   }, []);
-
-  useEffect(() => {
-    return () => {
-      clearMarkers();
-      clearRoute();
-      clearStepMarkers();
-
-      if (mapRef.current) {
-        try {
-          mapRef.current.destroy();
-        } catch {}
-        mapRef.current = null;
-      }
-    };
-  }, [clearMarkers, clearRoute, clearStepMarkers]);
 
   // Render route polyline (always visible on map)
   const renderRoutePolyline = useCallback(() => {
@@ -305,21 +200,21 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
         });
         marker.setMap(mapRef.current);
         stepMarkersRef.current.push(marker);
-      } catch {}
+      } catch { }
     });
-  }, [locations, clearStepMarkers]);
+  }, [clearStepMarkers, locations]);
 
-  // Render polyline once map loads (always visible)
+  // Render polyline once map loads (always visible) — re-render when locations change
   useEffect(() => {
-    if (!mapRef.current || !window.AMap || !mapLoaded || locationsLoading) return;
+    if (!mapRef.current || !window.AMap || !mapLoaded) return;
     if (selectedLocation) return;
     clearRoute();
     renderRoutePolyline();
-  }, [mapLoaded, locations, locationsLoading, selectedLocation, clearRoute, renderRoutePolyline]);
+  }, [mapLoaded, selectedLocation, locations, renderRoutePolyline, clearRoute]);
 
   // Show/hide step markers based on zoom level
   useEffect(() => {
-    if (!mapRef.current || !window.AMap || !mapLoaded || locationsLoading) return;
+    if (!mapRef.current || !window.AMap || !mapLoaded) return;
     if (selectedLocation) return;
 
     if (zoomLevel >= ZOOM_THRESHOLD) {
@@ -327,7 +222,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     } else {
       clearStepMarkers();
     }
-  }, [zoomLevel, mapLoaded, locations, locationsLoading, selectedLocation, renderStepMarkers, clearStepMarkers]);
+  }, [zoomLevel, mapLoaded, selectedLocation, locations, renderStepMarkers, clearStepMarkers]);
 
   // Export to AMap App
   const exportToAMap = useCallback(() => {
@@ -402,7 +297,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
         console.warn('Cluster marker failed', e);
       }
     });
-  }, [locations, clearMarkers]);
+  }, [clearMarkers, locations]);
 
   // Render individual location markers (zoomed in)
   const renderLocationMarkers = useCallback(() => {
@@ -417,7 +312,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
         const ne = bounds.getNorthEast();
         const sw = bounds.getSouthWest();
         return loc.lat >= sw.getLat() && loc.lat <= ne.getLat() &&
-               loc.lng >= sw.getLng() && loc.lng <= ne.getLng();
+          loc.lng >= sw.getLng() && loc.lng <= ne.getLng();
       } catch { return true; }
     });
 
@@ -437,7 +332,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
           <div style="font-weight:700;font-size:14px;color:#1a1a1a;margin-bottom:4px;">${loc.name}</div>
           <div style="display:flex;align-items:center;gap:3px;margin-bottom:6px;">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-            <span style="font-size:12px;color:#ef4444;font-weight:600;">${loc.distance}km</span>
+            <span style="font-size:12px;color:#ef4444;font-weight:600;">${loc.distance ?? ''}km</span>
           </div>
           <div style="display:flex;flex-direction:column;gap:4px;">
             ${recHtml}
@@ -480,13 +375,13 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
         });
         pin.setMap(mapRef.current);
         markersRef.current.push(pin);
-      } catch {}
+      } catch { }
     });
-  }, [locations, clearMarkers]);
+  }, [clearMarkers, locations]);
 
   // Update markers based on zoom level
   useEffect(() => {
-    if (!mapRef.current || !window.AMap || locationsLoading) return;
+    if (!mapRef.current || !window.AMap) return;
     if (selectedLocation) return; // Don't update markers when detail view is open
 
     if (zoomLevel < ZOOM_THRESHOLD) {
@@ -494,7 +389,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     } else {
       renderLocationMarkers();
     }
-  }, [zoomLevel, mapLoaded, locations, locationsLoading, selectedLocation, renderClusters, renderLocationMarkers]);
+  }, [zoomLevel, mapLoaded, selectedLocation, locations, renderClusters, renderLocationMarkers]);
 
   // Open location detail with loading animation
   const openLocationDetail = useCallback((loc: LocationPoint) => {
@@ -544,37 +439,6 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
         </div>
       )}
 
-      {/* Locations Loading Overlay */}
-      {mapLoaded && locationsLoading && !selectedLocation && (
-        <div className="absolute top-24 left-1/2 -translate-x-1/2 z-20 bg-white/90 backdrop-blur-sm rounded-full px-4 py-2 shadow-md flex items-center gap-2">
-          <div className="w-4 h-4 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm text-gray-600 font-medium">正在加载地点...</span>
-        </div>
-      )}
-
-      {/* Locations Error Overlay */}
-      {mapLoaded && locationsError && !selectedLocation && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/30">
-          <div className="bg-white rounded-2xl p-6 mx-6 flex flex-col items-center shadow-xl">
-            <MapPin className="w-10 h-10 text-gray-400 mb-3" />
-            <div className="text-gray-800 font-semibold mb-1">加载地点失败</div>
-            <div className="text-gray-500 text-sm text-center mb-4">{locationsError}</div>
-            <Button
-              onClick={() => {
-                setLocationsError(null);
-                setLocationsLoading(true);
-                tripMapService.getLocationsByTripId(tripId)
-                  .then(data => setLocations(data))
-                  .catch(err => setLocationsError(err.message))
-                  .finally(() => setLocationsLoading(false));
-              }}
-            >
-              重试
-            </Button>
-          </div>
-        </div>
-      )}
-
       {/* Top Nav - Only when map is visible */}
       {!selectedLocation && mapLoaded && (
         <div className="absolute top-0 left-0 right-0 z-40 bg-gradient-to-b from-black/40 to-transparent">
@@ -612,8 +476,8 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
             className="absolute inset-0 z-50 flex flex-col"
           >
             {detailLoading ? (
-              /* Loading State - Image 4 */
-              <div className="flex-1 bg-red-50/60 flex flex-col items-center justify-start pt-20">
+              /* Loading State */
+              <div className="flex-1 bg-red-50/60 flex flex-col items-center justify-center">
                 {/* Spinner */}
                 <div className="relative w-14 h-14 mb-4">
                   <svg className="animate-spin" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -626,23 +490,29 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                     />
                   </svg>
                 </div>
-                <div className="text-gray-800 font-semibold text-lg">馆子信息载入中...</div>
+                <div className="text-gray-800 font-semibold text-lg">信息载入中...</div>
 
                 {/* Bottom Map Button */}
-                <div className="absolute bottom-24 left-1/2 -translate-x-1/2 flex flex-col items-center">
+                <div className="absolute bottom-40 left-1/2 -translate-x-1/2 flex flex-col items-center">
                   <button
                     onClick={closeDetail}
                     className="w-16 h-16 rounded-full bg-gradient-to-br from-red-500 to-pink-500 flex items-center justify-center shadow-lg shadow-red-200 border-4 border-white"
                   >
                     <MapIcon className="w-7 h-7 text-white" />
                   </button>
-                  <span className="text-sm text-gray-600 mt-2 font-medium">地图</span>
-                  <span className="text-xs text-gray-400 mt-0.5">返回地图</span>
                 </div>
               </div>
             ) : (
               /* Detail Content - Image 3 */
               <div className="flex-1 bg-white overflow-y-auto">
+                {/* Close Button */}
+                <button
+                  onClick={closeDetail}
+                  className="absolute top-12 left-4 w-10 h-10 rounded-full bg-white/80 backdrop-blur-sm flex items-center justify-center shadow-md z-10"
+                >
+                  <ChevronLeft className="w-5 h-5 text-gray-700" />
+                </button>
+
                 {/* Header Section */}
                 <div className="px-5 pt-14 pb-5 bg-gradient-to-b from-red-50 to-white">
                   <div className="flex items-start justify-between">
@@ -828,7 +698,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                     <MapIcon className="w-7 h-7 text-white" />
                   </button>
                   <span className="text-sm text-gray-600 mt-1.5 font-medium bg-white/80 px-3 py-0.5 rounded-full backdrop-blur-sm">地图</span>
-                  <span className="text-xs text-gray-400 mt-0.5">返回地图</span>
+                
                 </div>
               </div>
             )}
@@ -882,9 +752,8 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
           {/* Export toggle button */}
           <button
             onClick={() => setShowExportMenu(!showExportMenu)}
-            className={`w-14 h-14 rounded-full flex items-center justify-center shadow-lg border-2 border-white active:scale-95 transition-all ${
-              showExportMenu ? 'bg-gray-700 rotate-45' : 'bg-gradient-to-br from-red-500 to-pink-500'
-            }`}
+            className={`w-14 h-14 rounded-full flex items-center justify-center shadow-lg border-2 border-white active:scale-95 transition-all ${showExportMenu ? 'bg-gray-700 rotate-45' : 'bg-gradient-to-br from-red-500 to-pink-500'
+              }`}
           >
             <Share2 className="w-6 h-6 text-white" />
           </button>
@@ -925,7 +794,8 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
       )}
 
       {/* Hide Scrollbar Style */}
-      <style dangerouslySetInnerHTML={{ __html: `
+      <style dangerouslySetInnerHTML={{
+        __html: `
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       `}} />

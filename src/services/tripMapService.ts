@@ -33,6 +33,7 @@ export type LocationPoint = {
   address: string;
   lat: number;
   lng: number;
+  distance?: string;
   type: TripMapLocationRow['type'];
   order: number;
   articles: TripMapArticle[];
