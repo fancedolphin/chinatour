@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react';
-import { Plus, Calendar, MapPin, Clock, ChevronRight, Share2, Trash2, Loader2, MessageSquare } from 'lucide-react';
+import { Plus, Calendar, MapPin, Clock, ChevronRight, Share2, Trash2, Loader2, MessageSquare, Globe, GitFork } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { TripDetailPage } from './TripDetailPage';
 import { TripMapPage } from './TripMapPage';
 import { ShareTripModal } from './ShareTripModal';
+import { PublishTripModal } from './PublishTripModal';
 import { useAuthContext } from '@/presentation/context/AuthContext';
 import { tripService, type Trip as DBTrip } from '@/services/tripService';
+import { sharedTripService } from '@/services/sharedTripService';
 
 interface Trip {
   id: string;
@@ -17,6 +19,8 @@ interface Trip {
   status: 'planning' | 'upcoming' | 'completed';
   image: string;
   budget: string;
+  source: string | null;
+  isPublished: boolean;
 }
 
 type ViewMode = 'list' | 'detail' | 'map';
@@ -33,6 +37,7 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
   const [shareTrip, setShareTrip] = useState<Trip | null>(null);
+  const [publishTrip, setPublishTrip] = useState<Trip | null>(null);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +82,14 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
       setLoading(true);
       setError(null);
       const data = await tripService.getUserTrips(currentUser!.id);
+      // 批量检查哪些行程已发布
+      const publishedSet = new Set<string>();
+      await Promise.all(
+        data.map(async (dbTrip) => {
+          const published = await sharedTripService.isPublished(dbTrip.id);
+          if (published) publishedSet.add(dbTrip.id);
+        })
+      );
       const mappedTrips: Trip[] = data.map((dbTrip: DBTrip) => ({
         id: dbTrip.id,
         destination: dbTrip.destination,
@@ -85,6 +98,8 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
         status: dbTrip.status,
         image: dbTrip.image_url || 'https://images.unsplash.com/photo-1488646953014-85cb44e25828',
         budget: dbTrip.budget || '未设置',
+        source: dbTrip.source ?? null,
+        isPublished: publishedSet.has(dbTrip.id),
       }));
       setTrips(mappedTrips);
     } catch (err) {
@@ -254,8 +269,20 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
                   alt={trip.destination}
                   className="w-full h-full object-cover"
                 />
-                <div className="absolute top-3 left-3">
+                <div className="absolute top-3 left-3 flex flex-col gap-1">
                   {getStatusBadge(trip.status)}
+                  {trip.source === 'forked' && (
+                    <Badge className="bg-purple-500 flex items-center gap-1 w-fit">
+                      <GitFork className="w-3 h-3" />
+                      从广场导入
+                    </Badge>
+                  )}
+                  {trip.isPublished && (
+                    <Badge className="bg-green-500 flex items-center gap-1 w-fit">
+                      <Globe className="w-3 h-3" />
+                      已发布
+                    </Badge>
+                  )}
                 </div>
                 <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
                 <h3 className="absolute bottom-3 left-3 text-white">
@@ -280,6 +307,18 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
                 </div>
 
                 <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPublishTrip(trip);
+                    }}
+                    title={trip.isPublished ? '已发布到广场' : '发布到广场'}
+                    className={trip.isPublished ? 'border-green-400 text-green-600' : ''}
+                  >
+                    <Globe className="w-4 h-4" />
+                  </Button>
                   <Button
                     variant="outline"
                     size="sm"
@@ -359,6 +398,21 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
           </div>
         )}
       </div>
+
+      {/* Publish Modal */}
+      {publishTrip && (
+        <PublishTripModal
+          tripId={publishTrip.id}
+          tripDestination={publishTrip.destination}
+          userId={currentUser!.id}
+          onClose={() => setPublishTrip(null)}
+          onPublished={() => {
+            setTrips((prev) =>
+              prev.map((t) => (t.id === publishTrip.id ? { ...t, isPublished: true } : t))
+            );
+          }}
+        />
+      )}
 
       {/* Share Modal */}
       {shareTrip && (
