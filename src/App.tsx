@@ -112,7 +112,13 @@ function AppContent() {
       case 'tips':
         return <TravelTipsPage />;
       case 'discover':
-        return <DestinationExplorePage onNavigateToTrips={() => setCurrentTab('trips')} />;
+        return (
+          <DestinationExplorePage
+            onImportSuccess={(_newTripId) => {
+              setCurrentTab('trips');
+            }}
+          />
+        );
       case 'profile':
         return <ProfilePage userPosts={userPosts} />;
       default:

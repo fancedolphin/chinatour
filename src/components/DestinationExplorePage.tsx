@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, TrendingUp, Calendar, Clock, MapPin, Heart, MessageCircle, Bookmark, Eye, GitFork, Loader2 } from 'lucide-react';
+import { Search, TrendingUp, Calendar, Clock, MapPin, Heart, MessageCircle, Bookmark, Eye, Download, Loader2 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { Badge } from './ui/badge';
@@ -9,10 +9,10 @@ import { useAuthContext } from '@/presentation/context/AuthContext';
 import { sharedTripService, type SharedTripCard, type SharedTripSortBy } from '@/services/sharedTripService';
 
 interface DestinationExplorePageProps {
-  onNavigateToTrips?: () => void;
+  onImportSuccess?: (newTripId: string) => void;
 }
 
-export function DestinationExplorePage({ onNavigateToTrips }: DestinationExplorePageProps = {}) {
+export function DestinationExplorePage({ onImportSuccess }: DestinationExplorePageProps = {}) {
   const { currentUser } = useAuthContext();
   const [trips, setTrips] = useState<SharedTripCard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -34,6 +34,22 @@ export function DestinationExplorePage({ onNavigateToTrips }: DestinationExplore
       setError(null);
       const data = await sharedTripService.getSharedTrips(sort);
       setTrips(data);
+
+      // 预加载当前用户的互动状态（一次批量查询）
+      if (currentUser && data.length > 0) {
+        const interactionMap = await sharedTripService.getBatchUserInteractions(
+          data.map((t) => t.id),
+          currentUser.id
+        );
+        const likedSet = new Set<string>();
+        const savedSet = new Set<string>();
+        interactionMap.forEach(({ liked, saved }, id) => {
+          if (liked) likedSet.add(id);
+          if (saved) savedSet.add(id);
+        });
+        setLikedTrips(likedSet);
+        setSavedTrips(savedSet);
+      }
     } catch (err) {
       console.error('[DestinationExplorePage] 加载失败:', err);
       setError(err instanceof Error ? err.message : '加载失败');
@@ -90,9 +106,9 @@ export function DestinationExplorePage({ onNavigateToTrips }: DestinationExplore
     }
     try {
       setForkingId(sharedTripId);
-      await sharedTripService.forkTrip(sharedTripId, currentUser.id);
-      toast.success('已导入到我的行程！');
-      onNavigateToTrips?.();
+      const newTripId = await sharedTripService.forkTrip(sharedTripId, currentUser.id);
+      toast.success('行程已导入，快去修改成你的专属路线！');
+      onImportSuccess?.(newTripId);
     } catch (err) {
       toast.error('导入失败：' + (err instanceof Error ? err.message : '未知错误'));
     } finally {
@@ -195,8 +211,24 @@ function TripsList({
 }: TripsListProps) {
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-8 h-8 text-red-500 animate-spin" />
+      <div className="space-y-4">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="bg-white rounded-xl overflow-hidden shadow-sm animate-pulse">
+            <div className="p-3 flex items-center gap-2 border-b border-gray-100">
+              <div className="w-8 h-8 rounded-full bg-gray-200" />
+              <div className="h-4 w-24 bg-gray-200 rounded" />
+            </div>
+            <div className="h-48 bg-gray-200" />
+            <div className="p-4 space-y-3">
+              <div className="flex gap-2">
+                <div className="h-5 w-16 bg-gray-200 rounded-full" />
+                <div className="h-5 w-16 bg-gray-200 rounded-full" />
+              </div>
+              <div className="h-4 w-full bg-gray-200 rounded" />
+              <div className="h-4 w-2/3 bg-gray-200 rounded" />
+            </div>
+          </div>
+        ))}
       </div>
     );
   }
@@ -319,14 +351,14 @@ function TripsList({
                 <Button
                   size="sm"
                   variant="outline"
-                  className="flex items-center gap-1 text-purple-600 border-purple-300 hover:bg-purple-50"
+                  className="flex items-center gap-1 text-blue-600 border-blue-200 hover:bg-blue-50"
                   onClick={() => onFork(trip.id)}
                   disabled={forkingId === trip.id}
                 >
                   {forkingId === trip.id ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
-                    <GitFork className="w-4 h-4" />
+                    <Download className="w-4 h-4" />
                   )}
                   导入行程
                 </Button>
