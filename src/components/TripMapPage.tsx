@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { ChevronLeft, MapPin, Navigation, Heart, Search, Map as MapIcon, Play, ExternalLink, Share2 } from 'lucide-react';
+import { ChevronLeft, MapPin, Navigation, Heart, Map as MapIcon, Play, ExternalLink, Share2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { toast } from 'sonner@2.0.3';
 import { motion, AnimatePresence } from 'motion/react';
 import { tripMapService } from '../services/tripMapService';
 import type { LocationPoint } from '../services/tripMapService';
+import { supabase } from '../utils/supabase/client';
 
 declare global {
   interface Window {
@@ -66,7 +67,8 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
   const [showExportMenu, setShowExportMenu] = useState(false);
 
   // Fetch locations from database
-  useEffect(() => {
+  const loadLocations = useCallback(() => {
+    setLocationsError(null);
     tripMapService.getLocationsByTripId(tripId)
       .then(setLocations)
       .catch((err) => {
@@ -76,29 +78,43 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
       });
   }, [tripId]);
 
-  // Load AMap Script
+  useEffect(() => { loadLocations(); }, [loadLocations]);
+
+  // Load AMap Script via Edge Function
   useEffect(() => {
     if (window.AMap) {
       setMapLoaded(true);
       return;
     }
 
-    const apiKey = import.meta.env.VITE_AMAP_API_KEY as string;
-    const securityCode = import.meta.env.VITE_AMAP_SECURITY_CODE as string;
+    (async () => {
+      let apiKey: string;
+      let securityCode: string;
 
-    if (!apiKey) {
-      setConfigError('未配置高德地图 API Key');
-      return;
-    }
+      try {
+        const { data, error } = await supabase.functions.invoke('amap-config');
+        if (error || !data?.key) throw new Error(error?.message || 'missing key');
+        apiKey = data.key;
+        securityCode = data.securityCode || '';
+      } catch (e) {
+        // Fallback to env vars for local dev
+        apiKey = import.meta.env.VITE_AMAP_API_KEY as string;
+        securityCode = import.meta.env.VITE_AMAP_SECURITY_CODE as string;
+        if (!apiKey) {
+          setConfigError('未配置高德地图 API Key');
+          return;
+        }
+      }
 
-    window._AMapSecurityConfig = { securityJsCode: securityCode || '' };
-    window.initAMap = () => setMapLoaded(true);
+      window._AMapSecurityConfig = { securityJsCode: securityCode };
+      window.initAMap = () => setMapLoaded(true);
 
-    const script = document.createElement('script');
-    script.src = `https://webapi.amap.com/maps?v=1.4.15&key=${apiKey}&callback=initAMap`;
-    script.async = true;
-    script.onerror = () => { toast.error('地图加载失败'); setConfigError('地图脚本加载失败'); };
-    document.body.appendChild(script);
+      const script = document.createElement('script');
+      script.src = `https://webapi.amap.com/maps?v=1.4.15&key=${apiKey}&callback=initAMap`;
+      script.async = true;
+      script.onerror = () => { toast.error('地图加载失败'); setConfigError('地图脚本加载失败'); };
+      document.body.appendChild(script);
+    })();
   }, []);
 
   // Initialize Map
@@ -416,6 +432,15 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
         style={{ width: '100%', height: '100%' }}
       />
 
+      {/* Locations Error Overlay */}
+      {locationsError && mapLoaded && !selectedLocation && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-40 bg-white rounded-xl px-4 py-3 shadow-lg border border-red-100 flex items-center gap-3">
+          <MapPin className="w-5 h-5 text-red-500 flex-shrink-0" />
+          <span className="text-sm text-gray-700">{locationsError}</span>
+          <Button variant="outline" size="sm" onClick={loadLocations}>重试</Button>
+        </div>
+      )}
+
       {/* Map Loading State */}
       {!mapLoaded && !selectedLocation && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-gray-50">
@@ -442,7 +467,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
       {/* Top Nav - Only when map is visible */}
       {!selectedLocation && mapLoaded && (
         <div className="absolute top-0 left-0 right-0 z-40 bg-gradient-to-b from-black/40 to-transparent">
-          <div className="px-4 pt-12 pb-3 flex items-center justify-between">
+          <div className="px-4 pt-12 pb-3 flex items-center gap-3">
             <Button
               variant="ghost"
               size="icon"
@@ -454,13 +479,6 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
             <div className="text-white font-semibold text-base drop-shadow">
               {zoomLevel < ZOOM_THRESHOLD ? '城市概览' : '探索地点'}
             </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="rounded-full bg-white/20 backdrop-blur-md hover:bg-white/40 text-white"
-            >
-              <Search className="w-5 h-5" />
-            </Button>
           </div>
         </div>
       )}
@@ -477,7 +495,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
           >
             {detailLoading ? (
               /* Loading State */
-              <div className="flex-1 bg-red-50/60 flex flex-col items-center justify-center">
+              <div className="flex-1 bg-red-50/60 flex flex-col items-center justify-start pt-20">
                 {/* Spinner */}
                 <div className="relative w-14 h-14 mb-4">
                   <svg className="animate-spin" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -493,13 +511,15 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                 <div className="text-gray-800 font-semibold text-lg">信息载入中...</div>
 
                 {/* Bottom Map Button */}
-                <div className="absolute bottom-40 left-1/2 -translate-x-1/2 flex flex-col items-center">
+                <div className="absolute bottom-24 left-1/2 -translate-x-1/2 flex flex-col items-center">
                   <button
                     onClick={closeDetail}
                     className="w-16 h-16 rounded-full bg-gradient-to-br from-red-500 to-pink-500 flex items-center justify-center shadow-lg shadow-red-200 border-4 border-white"
                   >
                     <MapIcon className="w-7 h-7 text-white" />
                   </button>
+                  <span className="text-sm text-gray-600 mt-2 font-medium">地图</span>
+                  
                 </div>
               </div>
             ) : (
@@ -697,7 +717,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                   >
                     <MapIcon className="w-7 h-7 text-white" />
                   </button>
-                  <span className="text-sm text-gray-600 mt-1.5 font-medium bg-white/80 px-3 py-0.5 rounded-full backdrop-blur-sm">地图</span>
+                  <span className="text-sm text-gray-600 mt-1.5 font-medium bg-white/80 px-3 py-0.5 rounded-full backdrop-blur-sm">返回地图</span>
                 
                 </div>
               </div>

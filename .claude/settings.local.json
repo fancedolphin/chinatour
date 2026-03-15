@@ -28,7 +28,10 @@
       "Bash(find:*)",
       "mcp__linear-server__list_teams",
       "mcp__linear-server__list_issues",
-      "Bash(sed:*)"
+      "Bash(sed:*)",
+      "mcp__linear-server__list_projects",
+      "mcp__linear-server__get_issue",
+      "Bash(grep:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
