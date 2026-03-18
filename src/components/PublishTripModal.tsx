@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Loader2, Globe, X } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { Loader2, Globe, X, CheckCircle2, AlertCircle } from 'lucide-react';
 import { Button } from './ui/button';
 import { sharedTripService } from '@/services/sharedTripService';
 
 const PRESET_TAGS = ['亲子游', '蜜月旅行', '自由行', '打卡美食', '穷游攻略', '周末短途'];
 const MAX_TAGS = 3;
+
+type Status = 'idle' | 'loading' | 'success' | 'error';
 
 interface PublishTripModalProps {
   tripId: string;
@@ -26,9 +27,13 @@ export function PublishTripModal({
   onPublished,
   onUnpublished,
 }: PublishTripModalProps) {
+  const [title, setTitle] = useState(tripDestination);
   const [description, setDescription] = useState('');
+  const [coverImage, setCoverImage] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState<Status>('idle');
+  const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
 
   const toggleTag = (tag: string) => {
     setSelectedTags((prev) => {
@@ -39,139 +44,209 @@ export function PublishTripModal({
   };
 
   const handlePublish = async () => {
+    setStatus('loading');
+    setErrorMsg('');
     try {
-      setLoading(true);
       await sharedTripService.publishTrip(tripId, userId, {
+        title: title.trim() || undefined,
         description: description.trim() || undefined,
+        coverImage: coverImage.trim() || undefined,
         tags: selectedTags.length > 0 ? selectedTags : undefined,
       });
-      toast.success('行程已发布到广场！');
+      setSuccessMsg('行程已发布到广场！');
+      setStatus('success');
       onPublished();
-      onClose();
     } catch (err) {
-      toast.error('发布失败：' + (err instanceof Error ? err.message : '未知错误'));
-    } finally {
-      setLoading(false);
+      setErrorMsg(err instanceof Error ? err.message : '发布失败，请重试');
+      setStatus('error');
     }
   };
 
   const handleUnpublish = async () => {
+    setStatus('loading');
+    setErrorMsg('');
     try {
-      setLoading(true);
       await sharedTripService.unpublishTrip(tripId);
-      toast.success('已从广场撤下');
+      setSuccessMsg('已从广场撤下');
+      setStatus('success');
       onUnpublished?.();
-      onClose();
     } catch (err) {
-      toast.error('撤下失败：' + (err instanceof Error ? err.message : '未知错误'));
-    } finally {
-      setLoading(false);
+      setErrorMsg(err instanceof Error ? err.message : '撤下失败，请重试');
+      setStatus('error');
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+  const isLoading = status === 'loading';
 
-      <div className="relative w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl p-6 shadow-xl">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-5">
+  return (
+    <div className="fixed inset-0 z-[60] flex flex-col justify-end">
+      <div className="absolute inset-0 bg-black/50" onClick={status === 'loading' ? undefined : onClose} />
+
+      <div className="relative bg-white rounded-t-2xl w-full flex flex-col" style={{ maxHeight: '80vh' }}>
+
+        {/* 头部 */}
+        <div className="flex items-center justify-between px-5 pt-5 pb-3 flex-shrink-0">
           <div className="flex items-center gap-2">
             <Globe className="w-5 h-5 text-red-500" />
-            <h2 className="text-gray-900">
+            <span className="text-base font-medium text-gray-900">
               {alreadyPublished ? '管理发布' : '发布到广场'}
-            </h2>
+            </span>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <button
+            onClick={onClose}
+            disabled={isLoading}
+            className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-40"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <p className="text-sm text-gray-500 mb-5">
-          将「{tripDestination}」分享给其他旅行者，他们可以收藏或导入你的行程。
-        </p>
-
-        {/* Description */}
-        <div className="mb-4">
-          <label className="block text-sm text-gray-700 mb-1">行程简介（可选）</label>
-          <textarea
-            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm resize-none outline-none focus:border-red-400"
-            rows={3}
-            maxLength={200}
-            placeholder="分享一下这次旅行的亮点..."
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-          <p className="text-xs text-gray-400 text-right">{description.length}/200</p>
-        </div>
-
-        {/* Preset Tags */}
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-2">
-            <label className="text-sm text-gray-700">标签（最多选 {MAX_TAGS} 个）</label>
-            <span className="text-xs text-gray-400">{selectedTags.length}/{MAX_TAGS}</span>
+        {/* 成功状态 */}
+        {status === 'success' && (
+          <div className="flex-1 flex flex-col items-center justify-center px-5 py-10 gap-4">
+            <CheckCircle2 className="w-16 h-16 text-green-500" />
+            <p className="text-lg font-medium text-gray-900">{successMsg}</p>
+            <Button className="w-full bg-red-500 hover:bg-red-600 text-white mt-2" onClick={onClose}>
+              完成
+            </Button>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {PRESET_TAGS.map((tag) => {
-              const selected = selectedTags.includes(tag);
-              const disabled = !selected && selectedTags.length >= MAX_TAGS;
-              return (
-                <button
-                  key={tag}
-                  onClick={() => toggleTag(tag)}
-                  disabled={disabled}
-                  className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
-                    selected
-                      ? 'bg-red-500 text-white border-red-500'
-                      : disabled
-                      ? 'bg-gray-50 text-gray-300 border-gray-200 cursor-not-allowed'
-                      : 'bg-white text-gray-600 border-gray-200 hover:border-red-300 hover:text-red-500'
-                  }`}
-                >
-                  {tag}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        )}
 
-        {/* Actions */}
-        <div className="flex gap-3">
-          {alreadyPublished ? (
-            <>
-              <Button
-                variant="outline"
-                className="flex-1 text-red-500 border-red-200 hover:bg-red-50"
-                onClick={handleUnpublish}
-                disabled={loading}
-              >
-                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                撤下广场
-              </Button>
-              <Button
-                className="flex-1 bg-red-500 hover:bg-red-600 text-white"
-                onClick={handlePublish}
-                disabled={loading}
-              >
-                更新发布
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button variant="outline" className="flex-1" onClick={onClose} disabled={loading}>
-                取消
-              </Button>
-              <Button
-                className="flex-1 bg-red-500 hover:bg-red-600 text-white"
-                onClick={handlePublish}
-                disabled={loading}
-              >
-                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                发布
-              </Button>
-            </>
-          )}
-        </div>
+        {/* 错误提示（内联，不依赖 toast） */}
+        {status === 'error' && (
+          <div className="mx-5 mb-3 flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex-shrink-0">
+            <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-red-600">{errorMsg}</p>
+          </div>
+        )}
+
+        {/* 表单内容（success 时隐藏） */}
+        {status !== 'success' && (
+          <>
+            <div className="flex-1 overflow-y-auto px-5">
+              <p className="text-sm text-gray-500 mb-4">
+                将「{tripDestination}」分享给其他旅行者，他们可以收藏或导入你的行程。
+              </p>
+
+              <div className="mb-4">
+                <label className="block text-sm text-gray-700 mb-1">标题</label>
+                <input
+                  type="text"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-red-400"
+                  maxLength={50}
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  disabled={isLoading}
+                />
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-sm text-gray-700 mb-1">封面图链接（可选）</label>
+                <input
+                  type="url"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-red-400"
+                  placeholder="https://..."
+                  value={coverImage}
+                  onChange={(e) => setCoverImage(e.target.value)}
+                  disabled={isLoading}
+                />
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-sm text-gray-700 mb-1">行程简介（可选）</label>
+                <textarea
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm resize-none outline-none focus:border-red-400"
+                  rows={3}
+                  maxLength={200}
+                  placeholder="分享一下这次旅行的亮点..."
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  disabled={isLoading}
+                />
+                <p className="text-xs text-gray-400 text-right">{description.length}/200</p>
+              </div>
+
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm text-gray-700">标签（最多选 {MAX_TAGS} 个）</label>
+                  <span className="text-xs text-gray-400">{selectedTags.length}/{MAX_TAGS}</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {PRESET_TAGS.map((tag) => {
+                    const selected = selectedTags.includes(tag);
+                    const disabled = isLoading || (!selected && selectedTags.length >= MAX_TAGS);
+                    return (
+                      <button
+                        key={tag}
+                        onClick={() => toggleTag(tag)}
+                        disabled={disabled}
+                        className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                          selected
+                            ? 'bg-red-500 text-white border-red-500'
+                            : disabled
+                            ? 'bg-gray-50 text-gray-300 border-gray-200 cursor-not-allowed'
+                            : 'bg-white text-gray-600 border-gray-200 hover:border-red-300 hover:text-red-500'
+                        }`}
+                      >
+                        {tag}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* 底部按钮 — 所有按钮内容用 span 包裹，避免 element+文本节点混用导致 React DOM crash */}
+            <div className="flex-shrink-0 flex gap-3 px-5 py-4 border-t border-gray-100">
+              {alreadyPublished ? (
+                <>
+                  <Button
+                    variant="outline"
+                    className="flex-1 text-red-500 border-red-200 hover:bg-red-50"
+                    onClick={handleUnpublish}
+                    disabled={isLoading}
+                  >
+                    <span className="flex items-center justify-center gap-2">
+                      {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                      <span>{isLoading ? '处理中...' : '撤下广场'}</span>
+                    </span>
+                  </Button>
+                  <Button
+                    className="flex-1 bg-red-500 hover:bg-red-600 text-white"
+                    onClick={handlePublish}
+                    disabled={isLoading}
+                  >
+                    <span className="flex items-center justify-center gap-2">
+                      {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                      <span>{isLoading ? '处理中...' : '更新发布'}</span>
+                    </span>
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    onClick={onClose}
+                    disabled={isLoading}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    className="flex-1 bg-red-500 hover:bg-red-600 text-white"
+                    onClick={handlePublish}
+                    disabled={isLoading}
+                  >
+                    <span className="flex items-center justify-center gap-2">
+                      {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                      <span>{isLoading ? '处理中...' : '发布'}</span>
+                    </span>
+                  </Button>
+                </>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

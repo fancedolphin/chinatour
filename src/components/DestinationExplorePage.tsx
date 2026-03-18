@@ -32,7 +32,7 @@ export function DestinationExplorePage({ onImportSuccess }: DestinationExplorePa
     try {
       setLoading(true);
       setError(null);
-      const data = await sharedTripService.getSharedTrips(sort);
+      const data = await sharedTripService.getAllSharedTrips({ sort });
       setTrips(data);
 
       // 预加载当前用户的互动状态（一次批量查询）

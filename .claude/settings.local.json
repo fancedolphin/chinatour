@@ -31,7 +31,14 @@
       "Bash(sed:*)",
       "mcp__linear-server__list_projects",
       "mcp__linear-server__get_issue",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "mcp__linear-server__save_milestone",
+      "mcp__linear-server__save_issue",
+      "Bash(git diff:*)",
+      "Bash(cd:*)",
+      "mcp__supabase__apply_migration",
+      "mcp__linear-server__save_project",
+      "WebFetch(domain:lbs.amap.com)"
     ]
   },
   "enableAllProjectMcpServers": true,

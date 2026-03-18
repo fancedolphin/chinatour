@@ -38,7 +38,9 @@ export interface SharedTripCard {
 export type SharedTripSortBy = 'latest' | 'hot' | 'recommend';
 
 export interface PublishTripOptions {
+  title?: string;
   description?: string;
+  coverImage?: string;
   tags?: string[];
   highlights?: string[];
 }
@@ -47,7 +49,9 @@ export const sharedTripService = {
   /**
    * 获取广场公开行程列表
    */
-  async getSharedTrips(sortBy: SharedTripSortBy = 'recommend'): Promise<SharedTripCard[]> {
+  async getAllSharedTrips(options?: { sort?: SharedTripSortBy; tag?: string }): Promise<SharedTripCard[]> {
+    const sortBy = options?.sort ?? 'recommend';
+    const tag = options?.tag;
     let query = supabase
       .from('shared_trips')
       .select(`
@@ -77,6 +81,10 @@ export const sharedTripService = {
         )
       `)
       .eq('is_active', true);
+
+    if (tag) {
+      query = query.contains('tags', [tag]);
+    }
 
     if (sortBy === 'hot') {
       query = query.order('likes_count', { ascending: false });
@@ -155,7 +163,9 @@ export const sharedTripService = {
         .from('shared_trips')
         .update({
           is_active: true,
+          title: opts.title ?? null,
           description: opts.description ?? null,
+          cover_image: opts.coverImage ?? null,
           tags: opts.tags ?? null,
           highlights: opts.highlights ?? null,
           updated_at: new Date().toISOString(),
@@ -173,7 +183,9 @@ export const sharedTripService = {
       trip_id: tripId,
       user_id: userId,
       is_active: true,
+      title: opts.title ?? null,
       description: opts.description ?? null,
+      cover_image: opts.coverImage ?? null,
       tags: opts.tags ?? null,
       highlights: opts.highlights ?? null,
       likes_count: 0,

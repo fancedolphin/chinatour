@@ -189,6 +189,63 @@ export type Database = {
         }
         Relationships: []
       }
+      food_encyclopedia: {
+        Row: {
+          allergen_note: string | null
+          allergens: string[] | null
+          category: string
+          created_at: string | null
+          cuisine: string
+          flavor_md: string | null
+          foreign_analogies: Json | null
+          id: string
+          is_published: boolean | null
+          name_en: string | null
+          name_pinyin: string | null
+          name_zh: string
+          ordering_tips: string | null
+          spice_level: number | null
+          traveler_tips: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          allergen_note?: string | null
+          allergens?: string[] | null
+          category: string
+          created_at?: string | null
+          cuisine: string
+          flavor_md?: string | null
+          foreign_analogies?: Json | null
+          id?: string
+          is_published?: boolean | null
+          name_en?: string | null
+          name_pinyin?: string | null
+          name_zh: string
+          ordering_tips?: string | null
+          spice_level?: number | null
+          traveler_tips?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          allergen_note?: string | null
+          allergens?: string[] | null
+          category?: string
+          created_at?: string | null
+          cuisine?: string
+          flavor_md?: string | null
+          foreign_analogies?: Json | null
+          id?: string
+          is_published?: boolean | null
+          name_en?: string | null
+          name_pinyin?: string | null
+          name_zh?: string
+          ordering_tips?: string | null
+          spice_level?: number | null
+          traveler_tips?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       location_articles: {
         Row: {
           author_avatar: string | null
@@ -357,6 +414,7 @@ export type Database = {
       shared_trips: {
         Row: {
           comments_count: number | null
+          cover_image: string | null
           description: string | null
           featured: boolean | null
           highlights: string[] | null
@@ -366,6 +424,7 @@ export type Database = {
           saves_count: number | null
           shared_at: string | null
           tags: string[] | null
+          title: string | null
           trip_id: string
           updated_at: string | null
           user_id: string
@@ -373,6 +432,7 @@ export type Database = {
         }
         Insert: {
           comments_count?: number | null
+          cover_image?: string | null
           description?: string | null
           featured?: boolean | null
           highlights?: string[] | null
@@ -382,6 +442,7 @@ export type Database = {
           saves_count?: number | null
           shared_at?: string | null
           tags?: string[] | null
+          title?: string | null
           trip_id: string
           updated_at?: string | null
           user_id: string
@@ -389,6 +450,7 @@ export type Database = {
         }
         Update: {
           comments_count?: number | null
+          cover_image?: string | null
           description?: string | null
           featured?: boolean | null
           highlights?: string[] | null
@@ -398,6 +460,7 @@ export type Database = {
           saves_count?: number | null
           shared_at?: string | null
           tags?: string[] | null
+          title?: string | null
           trip_id?: string
           updated_at?: string | null
           user_id?: string
