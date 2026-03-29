@@ -1,51 +1,146 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { TripPlannerBottomNav } from './components/TripPlannerBottomNav';
 import { PlanInputPage } from './components/PlanInputPage';
 import { MyTripsPage } from './components/MyTripsPage';
 import { DestinationExplorePage } from './components/DestinationExplorePage';
+import { SharedTripDetailPage } from './components/SharedTripDetailPage';
 import { ProfilePage } from './components/ProfilePage';
 import { TravelTipsPage } from './presentation/pages/TravelTipsPage';
-import { FeedItem } from './components/FeedCard';
 import { LoginPage } from './components/LoginPage';
 import { QuickLoginPanel } from './components/QuickLoginPanel';
 import { Toaster } from 'sonner@2.0.3';
-import { LogIn, User as UserIcon, Globe } from 'lucide-react';
+import { Globe, LogIn, User as UserIcon } from 'lucide-react';
 import { Button } from './components/ui/button';
-import { Avatar, AvatarImage, AvatarFallback } from './components/ui/avatar';
-
-// DDD Architecture Imports
+import { Avatar, AvatarFallback, AvatarImage } from './components/ui/avatar';
 import { AuthProvider, useAuthContext } from './presentation/context/AuthContext';
 import { LanguageProvider, useLanguage } from './presentation/context/LanguageContext';
 import { ThemeProvider } from './presentation/context/ThemeContext';
 import { RouteGuard } from './presentation/components/RouteGuard';
 
-interface UserProfile {
-  name: string;
-  email: string;
-  avatar: string;
+type AppTab = 'planner' | 'trips' | 'tips' | 'discover' | 'profile' | 'login';
+
+interface ParsedRoute {
+  tab: AppTab;
+  profileUserId: string | null;
+  sharedTripDetailId: string | null;
 }
 
-/**
- * 主应用组件（内部 - 使用Context）
- */
+interface ProfileReturnState {
+  tab: AppTab;
+  sharedTripDetailId: string | null;
+}
+
+function normalizePath(pathname: string) {
+  if (pathname.length > 1 && pathname.endsWith('/')) {
+    return pathname.slice(0, -1);
+  }
+  return pathname || '/';
+}
+
+function parseLocation(pathname: string): ParsedRoute {
+  const normalizedPath = normalizePath(pathname);
+
+  if (normalizedPath === '/profile') {
+    return { tab: 'profile', profileUserId: null, sharedTripDetailId: null };
+  }
+
+  if (normalizedPath.startsWith('/profile/')) {
+    return {
+      tab: 'profile',
+      profileUserId: decodeURIComponent(normalizedPath.replace('/profile/', '')) || null,
+      sharedTripDetailId: null,
+    };
+  }
+
+  if (normalizedPath.startsWith('/trip/')) {
+    return {
+      tab: 'discover',
+      profileUserId: null,
+      sharedTripDetailId: decodeURIComponent(normalizedPath.replace('/trip/', '')) || null,
+    };
+  }
+
+  switch (normalizedPath) {
+    case '/planner':
+    case '/':
+      return { tab: 'planner', profileUserId: null, sharedTripDetailId: null };
+    case '/trips':
+      return { tab: 'trips', profileUserId: null, sharedTripDetailId: null };
+    case '/tips':
+      return { tab: 'tips', profileUserId: null, sharedTripDetailId: null };
+    case '/discover':
+      return { tab: 'discover', profileUserId: null, sharedTripDetailId: null };
+    case '/login':
+      return { tab: 'login', profileUserId: null, sharedTripDetailId: null };
+    default:
+      return { tab: 'planner', profileUserId: null, sharedTripDetailId: null };
+  }
+}
+
+function buildPath(
+  tab: AppTab,
+  profileUserId: string | null,
+  currentUserId: string | null,
+  sharedTripDetailId: string | null,
+) {
+  if (tab === 'profile') {
+    if (profileUserId && profileUserId !== currentUserId) {
+      return `/profile/${encodeURIComponent(profileUserId)}`;
+    }
+    return '/profile';
+  }
+
+  if (tab === 'discover' && sharedTripDetailId) {
+    return `/trip/${encodeURIComponent(sharedTripDetailId)}`;
+  }
+
+  if (tab === 'planner') {
+    return '/';
+  }
+
+  return `/${tab}`;
+}
+
 function AppContent() {
-  const [currentTab, setCurrentTab] = useState('planner');
-  const [showLogin, setShowLogin] = useState(false);
+  const initialRoute = parseLocation(window.location.pathname);
+  const [currentTab, setCurrentTab] = useState<AppTab>(initialRoute.tab);
   const [resumeTripId, setResumeTripId] = useState<string | null>(null);
   const [tripMapTripId, setTripMapTripId] = useState<string | null>(null);
-  
-  // 使用新的DDD架构Context
+  const [sharedTripDetailId, setSharedTripDetailId] = useState<string | null>(initialRoute.sharedTripDetailId);
+  const [profileUserId, setProfileUserId] = useState<string | null>(initialRoute.profileUserId);
+  const [profileReturn, setProfileReturn] = useState<ProfileReturnState | null>(null);
+
   const { currentUser, isAuthenticated, logout } = useAuthContext();
   const { language, setLanguage, t } = useLanguage();
 
-  // Mock data for profile (keeping some existing functionality)
-  const userPosts: FeedItem[] = [];
+  useEffect(() => {
+    const handlePopState = () => {
+      const route = parseLocation(window.location.pathname);
+      setCurrentTab(route.tab);
+      setProfileUserId(route.profileUserId);
+      setSharedTripDetailId(route.sharedTripDetailId);
+      setProfileReturn(null);
+      if (route.tab !== 'discover' && !route.sharedTripDetailId) {
+        setSharedTripDetailId(null);
+      }
+    };
 
-  // 监听未授权事件，自动显示登录页
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, []);
+
+  useEffect(() => {
+    const nextPath = buildPath(currentTab, profileUserId, currentUser?.id ?? null, sharedTripDetailId);
+    if (normalizePath(window.location.pathname) !== nextPath) {
+      window.history.pushState({}, '', nextPath);
+    }
+  }, [currentTab, profileUserId, currentUser?.id, sharedTripDetailId]);
+
   useEffect(() => {
     const handleUnauthorized = () => {
-      setCurrentTab('login');
-      setShowLogin(false);
+      navigateToTab('login');
     };
 
     window.addEventListener('auth:unauthorized', handleUnauthorized);
@@ -54,16 +149,51 @@ function AppContent() {
     };
   }, []);
 
+  const navigateToTab = (tab: AppTab) => {
+    setCurrentTab(tab);
+    if (tab !== 'profile') {
+      setProfileUserId(null);
+      setProfileReturn(null);
+    }
+    if (tab !== 'discover') {
+      setSharedTripDetailId(null);
+    }
+  };
+
+  const openProfile = (userId: string) => {
+    setProfileReturn({
+      tab: currentTab,
+      sharedTripDetailId,
+    });
+    setProfileUserId(userId);
+    setCurrentTab('profile');
+  };
+
+  const handleProfileBack = () => {
+    if (!profileReturn) {
+      navigateToTab(isAuthenticated() ? 'planner' : 'login');
+      return;
+    }
+
+    const { tab, sharedTripDetailId: returnDetailId } = profileReturn;
+    setProfileReturn(null);
+    setProfileUserId(null);
+    setCurrentTab(tab);
+    if (tab === 'discover') {
+      setSharedTripDetailId(returnDetailId);
+    } else {
+      setSharedTripDetailId(null);
+    }
+  };
+
   const handleLoginSuccess = () => {
-    console.log('[App] 登录成功，准备跳转到首页');
-    // 登录成功后关闭登录框，跳转到规划页（首页）
-    setShowLogin(false);
-    setCurrentTab('planner');
+    setProfileReturn(null);
+    navigateToTab('planner');
   };
 
   const handleLogout = () => {
     logout();
-    setCurrentTab('login');
+    navigateToTab('login');
   };
 
   const toggleLanguage = () => {
@@ -71,39 +201,35 @@ function AppContent() {
   };
 
   const renderPage = () => {
-    // 如果是登录页，直接显示
     if (currentTab === 'login') {
       return (
         <LoginPage
-          onClose={() => setCurrentTab('planner')}
-          onLoginSuccess={() => {
-            handleLoginSuccess();
-          }}
+          onClose={() => navigateToTab('planner')}
+          onLoginSuccess={handleLoginSuccess}
         />
       );
     }
 
-    // 其他页面
     switch (currentTab) {
       case 'planner':
         return (
           <PlanInputPage
-            onNavigateToTrips={() => setCurrentTab('trips')}
+            onNavigateToTrips={() => navigateToTab('trips')}
             resumeTripId={resumeTripId ?? undefined}
             onClearResume={() => setResumeTripId(null)}
             onOpenMap={(tripId) => {
               setTripMapTripId(tripId);
-              setCurrentTab('trips');
+              navigateToTab('trips');
             }}
           />
         );
       case 'trips':
         return (
           <MyTripsPage
-            onNavigateToPlanner={() => setCurrentTab('planner')}
+            onNavigateToPlanner={() => navigateToTab('planner')}
             onContinueChat={(tripId) => {
               setResumeTripId(tripId);
-              setCurrentTab('planner');
+              navigateToTab('planner');
             }}
             openMapTripId={tripMapTripId ?? undefined}
             onOpenMapHandled={() => setTripMapTripId(null)}
@@ -112,77 +238,92 @@ function AppContent() {
       case 'tips':
         return <TravelTipsPage />;
       case 'discover':
+        if (sharedTripDetailId) {
+          return (
+            <SharedTripDetailPage
+              sharedTripId={sharedTripDetailId}
+              onBack={() => setSharedTripDetailId(null)}
+              onImportSuccess={() => {
+                setSharedTripDetailId(null);
+                navigateToTab('trips');
+              }}
+              onOpenProfile={openProfile}
+            />
+          );
+        }
         return (
           <DestinationExplorePage
-            onImportSuccess={(_newTripId) => {
-              setCurrentTab('trips');
-            }}
+            onImportSuccess={() => navigateToTab('trips')}
+            onOpenDetail={(id) => setSharedTripDetailId(id)}
+            onOpenProfile={openProfile}
           />
         );
       case 'profile':
-        return <ProfilePage userPosts={userPosts} />;
+        return (
+          <ProfilePage
+            viewedUserId={profileUserId ?? currentUser?.id ?? null}
+            onBack={profileReturn ? handleProfileBack : undefined}
+            onOpenDetail={(id) => {
+              setSharedTripDetailId(id);
+              setCurrentTab('discover');
+            }}
+          />
+        );
       default:
         return <PlanInputPage />;
     }
   };
 
   return (
-    <RouteGuard currentPage={currentTab} onRedirect={setCurrentTab}>
+    <RouteGuard currentPage={currentTab} onRedirect={(page) => navigateToTab(page as AppTab)}>
       <div className="min-h-screen bg-gray-50">
-        {/* Top Header with Login Button - 只在非登录页显示 */}
         {currentTab !== 'login' && (
-          <div className="fixed top-0 left-0 right-0 bg-white border-b border-gray-200 z-50 shadow-sm">
-            <div className="max-w-screen-xl mx-auto px-4 py-2 flex items-center justify-between">
+          <div className="fixed left-0 right-0 top-0 z-50 border-b border-gray-200 bg-white shadow-sm">
+            <div className="mx-auto flex max-w-screen-xl items-center justify-between px-4 py-2">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-gradient-to-br from-red-500 to-pink-500 rounded-lg flex items-center justify-center">
-                  <span className="text-white text-sm">✈️</span>
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-red-500 to-pink-500">
+                  <span className="text-sm text-white">✈️</span>
                 </div>
                 <span className="text-gray-900">{language === 'zh' ? '智能旅行' : 'Smart Travel'}</span>
               </div>
 
               <div className="flex items-center gap-2">
-                {/* Language Toggle */}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={toggleLanguage}
-                  className="gap-2"
-                >
-                  <Globe className="w-4 h-4" />
+                <Button variant="ghost" size="sm" onClick={toggleLanguage} className="gap-2">
+                  <Globe className="h-4 w-4" />
                   <span className="text-sm">{language === 'zh' ? '中文' : 'EN'}</span>
                 </Button>
 
-                {/* Login/User Button */}
                 {isAuthenticated() && currentUser ? (
                   <div className="flex items-center gap-3">
-                    <div className="hidden sm:flex flex-col items-end">
+                    <div className="hidden flex-col items-end sm:flex">
                       <span className="text-sm text-gray-900">{currentUser.displayName}</span>
                       <span className="text-xs text-gray-500">{currentUser.email}</span>
                     </div>
-                    <div className="relative group">
-                      <Avatar className="w-9 h-9 cursor-pointer ring-2 ring-transparent hover:ring-red-500 transition-all">
+                    <div className="group relative">
+                      <Avatar className="h-9 w-9 cursor-pointer ring-2 ring-transparent transition-all hover:ring-red-500">
                         <AvatarImage src={currentUser.avatar} alt={currentUser.displayName} />
                         <AvatarFallback className="bg-red-500 text-white">
                           {currentUser.displayName.charAt(0).toUpperCase()}
                         </AvatarFallback>
                       </Avatar>
-                      
-                      {/* Dropdown Menu */}
-                      <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
-                        <div className="p-3 border-b border-gray-100">
+
+                      <div className="invisible absolute right-0 top-full mt-2 w-48 rounded-xl border border-gray-200 bg-white opacity-0 shadow-lg transition-all group-hover:visible group-hover:opacity-100">
+                        <div className="border-b border-gray-100 p-3">
                           <p className="text-sm text-gray-900">{currentUser.displayName}</p>
-                          <p className="text-xs text-gray-500 truncate">{currentUser.email}</p>
+                          <p className="truncate text-xs text-gray-500">{currentUser.email}</p>
                         </div>
                         <button
-                          onClick={() => setCurrentTab('profile')}
-                          className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                          type="button"
+                          onClick={() => openProfile(currentUser.id)}
+                          className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
                         >
-                          <UserIcon className="w-4 h-4" />
+                          <UserIcon className="h-4 w-4" />
                           {t('nav.profile')}
                         </button>
                         <button
+                          type="button"
                           onClick={handleLogout}
-                          className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-b-xl"
+                          className="w-full rounded-b-xl px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
                         >
                           {t('auth.logout')}
                         </button>
@@ -191,11 +332,11 @@ function AppContent() {
                   </div>
                 ) : (
                   <Button
-                    onClick={() => setCurrentTab('login')}
-                    className="bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white gap-2"
+                    onClick={() => navigateToTab('login')}
+                    className="gap-2 bg-gradient-to-r from-red-500 to-pink-500 text-white hover:from-red-600 hover:to-pink-600"
                     size="sm"
                   >
-                    <LogIn className="w-4 h-4" />
+                    <LogIn className="h-4 w-4" />
                     <span className="hidden sm:inline">{t('auth.login')}</span>
                   </Button>
                 )}
@@ -204,40 +345,24 @@ function AppContent() {
           </div>
         )}
 
-        {/* Main Content with top padding */}
         <div className={currentTab !== 'login' ? 'pt-14' : ''}>
           {renderPage()}
         </div>
 
-        {/* Bottom Nav - 只在非登录页显示 */}
         {currentTab !== 'login' && (
-          <TripPlannerBottomNav currentTab={currentTab} onTabChange={setCurrentTab} />
+          <TripPlannerBottomNav currentTab={currentTab} onTabChange={(tab) => navigateToTab(tab as AppTab)} />
         )}
-        
+
         <Toaster position="top-center" richColors />
 
-        {/* Quick Login Panel (仅开发环境) */}
         {!isAuthenticated() && currentTab !== 'login' && (
-          <QuickLoginPanel onLoginSuccess={() => setCurrentTab('planner')} />
-        )}
-
-        {/* Login Modal */}
-        {showLogin && (
-          <LoginPage
-            onClose={() => setShowLogin(false)}
-            onLoginSuccess={() => {
-              handleLoginSuccess();
-            }}
-          />
+          <QuickLoginPanel onLoginSuccess={() => navigateToTab('planner')} />
         )}
       </div>
     </RouteGuard>
   );
 }
 
-/**
- * 主应用组件（外部 - 提供Providers）
- */
 export default function App() {
   return (
     <ThemeProvider>

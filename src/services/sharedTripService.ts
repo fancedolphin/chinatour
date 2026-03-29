@@ -45,18 +45,91 @@ export interface PublishTripOptions {
   highlights?: string[];
 }
 
+export const SHARED_TRIP_CARD_SELECT = `
+  id,
+  trip_id,
+  title,
+  cover_image,
+  description,
+  tags,
+  highlights,
+  likes_count,
+  saves_count,
+  comments_count,
+  views_count,
+  shared_at,
+  user_id,
+  trips (
+    destination,
+    start_date,
+    end_date,
+    duration,
+    budget,
+    image_url
+  ),
+  users (
+    id,
+    display_name,
+    avatar_url,
+    username
+  )
+`;
+
+export function mapSharedTripCard(row: any): SharedTripCard {
+  return {
+    id: row.id,
+    tripId: row.trip_id,
+    destination: row.trips?.destination ?? row.title ?? '未命名行程',
+    startDate: row.trips?.start_date ?? '',
+    endDate: row.trips?.end_date ?? '',
+    duration: row.trips?.duration ?? null,
+    budget: row.trips?.budget ?? null,
+    imageUrl: row.cover_image ?? row.trips?.image_url ?? null,
+    description: row.description,
+    tags: row.tags,
+    highlights: row.highlights,
+    likesCount: row.likes_count ?? 0,
+    savesCount: row.saves_count ?? 0,
+    commentsCount: row.comments_count ?? 0,
+    viewsCount: row.views_count ?? 0,
+    sharedAt: row.shared_at ?? '',
+    author: {
+      id: row.users?.id ?? row.user_id,
+      name: row.users?.display_name ?? row.users?.username ?? '用户',
+      avatar: row.users?.avatar_url ?? null,
+    },
+  };
+}
+
 export const sharedTripService = {
   /**
-   * 获取广场公开行程列表
+   * 根据 sharedTripId 获取单条详情（含作者信息 + 行程数据）
    */
-  async getAllSharedTrips(options?: { sort?: SharedTripSortBy; tag?: string }): Promise<SharedTripCard[]> {
-    const sortBy = options?.sort ?? 'recommend';
-    const tag = options?.tag;
-    let query = supabase
+  async getSharedTripById(sharedTripId: string): Promise<SharedTripCard & {
+    tripData: {
+      itineraries: Array<{
+        dayNumber: number;
+        date: string | null;
+        theme: string | null;
+        activities: Array<{
+          time: string | null;
+          name: string;
+          type: string;
+          description: string | null;
+          duration: string | null;
+          price: string | null;
+          address: string | null;
+        }>;
+      }>;
+    };
+  }> {
+    const { data, error } = await supabase
       .from('shared_trips')
       .select(`
         id,
         trip_id,
+        title,
+        cover_image,
         description,
         tags,
         highlights,
@@ -72,14 +145,77 @@ export const sharedTripService = {
           end_date,
           duration,
           budget,
-          image_url
+          image_url,
+          trip_itineraries (
+            day_number,
+            date,
+            theme,
+            activities (
+              time,
+              name,
+              type,
+              description,
+              duration,
+              price,
+              address,
+              order_index,
+              location_lat,
+              location_lng,
+              image_url
+            )
+          )
         ),
         users (
           id,
           display_name,
-          avatar_url
+          avatar_url,
+          username
         )
       `)
+      .eq('id', sharedTripId)
+      .eq('is_active', true)
+      .single();
+
+    if (error || !data) {
+      throw new Error(`Shared trip not found: ${sharedTripId}`);
+    }
+
+    const row = data as any;
+    const itineraries = (row.trips?.trip_itineraries ?? [])
+      .sort((a: any, b: any) => a.day_number - b.day_number)
+      .map((itin: any) => ({
+        dayNumber: itin.day_number,
+        date: itin.date,
+        theme: itin.theme,
+        activities: (itin.activities ?? [])
+          .sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0))
+          .map((act: any) => ({
+            time: act.time,
+            name: act.name,
+            type: act.type,
+            description: act.description,
+            duration: act.duration,
+            price: act.price,
+            address: act.address,
+          })),
+      }));
+
+    return {
+      ...mapSharedTripCard(row),
+      tripData: { itineraries },
+    };
+  },
+
+  /**
+   * 获取广场公开行程列表
+   */
+  async getAllSharedTrips(options?: { sort?: SharedTripSortBy; tag?: string }): Promise<SharedTripCard[]> {
+    const sortBy = options?.sort ?? 'recommend';
+    const tag = options?.tag;
+
+    let query = supabase
+      .from('shared_trips')
+      .select(SHARED_TRIP_CARD_SELECT)
       .eq('is_active', true);
 
     if (tag) {
@@ -87,7 +223,7 @@ export const sharedTripService = {
     }
 
     if (sortBy === 'hot') {
-      query = query.order('likes_count', { ascending: false });
+      query = query.order('likes_count', { ascending: false }).order('shared_at', { ascending: false });
     } else if (sortBy === 'latest') {
       query = query.order('shared_at', { ascending: false });
     } else {
@@ -101,29 +237,78 @@ export const sharedTripService = {
       throw new Error(`Failed to fetch shared trips: ${error.message}`);
     }
 
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      tripId: row.trip_id,
-      destination: row.trips?.destination ?? '',
-      startDate: row.trips?.start_date ?? '',
-      endDate: row.trips?.end_date ?? '',
-      duration: row.trips?.duration ?? null,
-      budget: row.trips?.budget ?? null,
-      imageUrl: row.trips?.image_url ?? null,
-      description: row.description,
-      tags: row.tags,
-      highlights: row.highlights,
-      likesCount: row.likes_count ?? 0,
-      savesCount: row.saves_count ?? 0,
-      commentsCount: row.comments_count ?? 0,
-      viewsCount: row.views_count ?? 0,
-      sharedAt: row.shared_at ?? '',
-      author: {
-        id: row.users?.id ?? row.user_id,
-        name: row.users?.display_name ?? '用户',
-        avatar: row.users?.avatar_url ?? null,
-      },
-    }));
+    return (data ?? []).map(mapSharedTripCard);
+  },
+
+  async getFollowingFeed(userId: string): Promise<SharedTripCard[]> {
+    const { data: follows, error: followError } = await supabase
+      .from('user_follows')
+      .select('following_id')
+      .eq('follower_id', userId);
+
+    if (followError) {
+      console.error('[sharedTripService] 获取关注列表失败:', followError.message);
+      throw new Error(`Failed to fetch following list: ${followError.message}`);
+    }
+
+    const followingIds = (follows ?? []).map((row) => row.following_id);
+    if (followingIds.length === 0) {
+      return [];
+    }
+
+    const { data, error } = await supabase
+      .from('shared_trips')
+      .select(SHARED_TRIP_CARD_SELECT)
+      .eq('is_active', true)
+      .in('user_id', followingIds)
+      .order('shared_at', { ascending: false });
+
+    if (error) {
+      console.error('[sharedTripService] 获取关注 feed 失败:', error.message);
+      throw new Error(`Failed to fetch following feed: ${error.message}`);
+    }
+
+    return (data ?? []).map(mapSharedTripCard);
+  },
+
+  async getSharedTripsByUser(userId: string): Promise<SharedTripCard[]> {
+    const { data, error } = await supabase
+      .from('shared_trips')
+      .select(SHARED_TRIP_CARD_SELECT)
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .order('shared_at', { ascending: false });
+
+    if (error) {
+      console.error('[sharedTripService] 获取用户发布行程失败:', error.message);
+      throw new Error(`Failed to fetch user shared trips: ${error.message}`);
+    }
+
+    return (data ?? []).map(mapSharedTripCard);
+  },
+
+  async getLikedSharedTripsByUser(userId: string): Promise<SharedTripCard[]> {
+    const { data, error } = await supabase
+      .from('user_interactions')
+      .select(`
+        liked_at,
+        shared_trips (
+          ${SHARED_TRIP_CARD_SELECT}
+        )
+      `)
+      .eq('user_id', userId)
+      .eq('liked', true)
+      .order('liked_at', { ascending: false });
+
+    if (error) {
+      console.error('[sharedTripService] 获取用户点赞行程失败:', error.message);
+      throw new Error(`Failed to fetch liked shared trips: ${error.message}`);
+    }
+
+    return (data ?? [])
+      .map((row: any) => row.shared_trips)
+      .filter(Boolean)
+      .map(mapSharedTripCard);
   },
 
   /**
@@ -140,6 +325,7 @@ export const sharedTripService = {
       console.error('[sharedTripService] 获取我的已发布行程失败:', error.message);
       throw new Error(`Failed to get my shared trips: ${error.message}`);
     }
+
     return data ?? [];
   },
 
@@ -151,7 +337,6 @@ export const sharedTripService = {
     userId: string,
     opts: PublishTripOptions = {}
   ): Promise<SharedTrip> {
-    // 检查是否已发布
     const { data: existing } = await supabase
       .from('shared_trips')
       .select('id')
@@ -175,7 +360,6 @@ export const sharedTripService = {
         .single();
 
       if (error) throw new Error(`Failed to re-publish trip: ${error.message}`);
-      console.log('[sharedTripService] 行程重新发布成功:', existing.id);
       return data!;
     }
 
@@ -205,7 +389,6 @@ export const sharedTripService = {
       throw new Error(`Failed to publish trip: ${error.message}`);
     }
 
-    console.log('[sharedTripService] 行程发布成功:', data!.id);
     return data!;
   },
 
@@ -219,7 +402,6 @@ export const sharedTripService = {
       .eq('trip_id', tripId);
 
     if (error) throw new Error(`Failed to unpublish trip: ${error.message}`);
-    console.log('[sharedTripService] 取消发布成功:', tripId);
   },
 
   /**
@@ -308,22 +490,6 @@ export const sharedTripService = {
       );
 
     if (error) throw new Error(`Failed to toggle like: ${error.message}`);
-
-    // 同步更新 likes_count（乐观更新，忽略失败）
-    const { data: current } = await supabase
-      .from('shared_trips')
-      .select('likes_count')
-      .eq('id', sharedTripId)
-      .single();
-
-    if (current) {
-      const newCount = Math.max(0, (current.likes_count ?? 0) + (newLiked ? 1 : -1));
-      await supabase
-        .from('shared_trips')
-        .update({ likes_count: newCount })
-        .eq('id', sharedTripId);
-    }
-
     return newLiked;
   },
 
@@ -348,21 +514,6 @@ export const sharedTripService = {
       );
 
     if (error) throw new Error(`Failed to toggle save: ${error.message}`);
-
-    const { data: current } = await supabase
-      .from('shared_trips')
-      .select('saves_count')
-      .eq('id', sharedTripId)
-      .single();
-
-    if (current) {
-      const newCount = Math.max(0, (current.saves_count ?? 0) + (newSaved ? 1 : -1));
-      await supabase
-        .from('shared_trips')
-        .update({ saves_count: newCount })
-        .eq('id', sharedTripId);
-    }
-
     return newSaved;
   },
 
@@ -372,7 +523,6 @@ export const sharedTripService = {
    * @returns 新行程 ID
    */
   async forkTrip(sharedTripId: string, targetUserId: string): Promise<string> {
-    // 1. 获取原始行程 ID
     const { data: shared, error: sharedError } = await supabase
       .from('shared_trips')
       .select('trip_id')
@@ -383,7 +533,6 @@ export const sharedTripService = {
       throw new Error(`Shared trip not found: ${sharedTripId}`);
     }
 
-    // 2. 获取完整行程详情
     const { data: sourceTrip, error: tripError } = await supabase
       .from('trips')
       .select(`
@@ -400,7 +549,6 @@ export const sharedTripService = {
       throw new Error(`Source trip not found: ${shared.trip_id}`);
     }
 
-    // 3. 创建新行程
     const { data: newTrip, error: newTripError } = await supabase
       .from('trips')
       .insert({
@@ -423,7 +571,6 @@ export const sharedTripService = {
       throw new Error(`Failed to fork trip: ${newTripError?.message}`);
     }
 
-    // 4. 复制行程单 + 活动
     const itineraries = (sourceTrip as any).trip_itineraries ?? [];
     for (const itin of itineraries) {
       const { data: newItin, error: itinErr } = await supabase
@@ -464,7 +611,6 @@ export const sharedTripService = {
       }
     }
 
-    console.log('[sharedTripService] Fork 完成:', { sharedTripId, newTripId: newTrip.id });
     return newTrip.id;
   },
 };

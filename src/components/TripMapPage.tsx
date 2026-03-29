@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { ChevronLeft, MapPin, Navigation, Heart, Map as MapIcon, Play, ExternalLink, Share2 } from 'lucide-react';
+import { ChevronLeft, MapPin, Navigation, Heart, Map as MapIcon, Play, ExternalLink, Share2, Image as ImageIcon, Loader2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { toast } from 'sonner@2.0.3';
 import { motion, AnimatePresence } from 'motion/react';
@@ -47,6 +47,133 @@ function buildClusters(locations: LocationPoint[]): CityCluster[] {
 }
 
 const ZOOM_THRESHOLD = 11;
+const STATIC_MAP_ENDPOINT = 'https://restapi.amap.com/v3/staticmap';
+const STATIC_MAP_MAX_MARKERS = 10;
+
+type AMapConfig = {
+  apiKey: string;
+  securityCode: string;
+};
+
+function getEnvAMapConfig(): AMapConfig {
+  return {
+    apiKey: (import.meta.env.VITE_AMAP_API_KEY as string) || '',
+    securityCode: (import.meta.env.VITE_AMAP_SECURITY_CODE as string) || '',
+  };
+}
+
+async function resolveAMapConfig(): Promise<AMapConfig> {
+  try {
+    const { data, error } = await supabase.functions.invoke('amap-config');
+    if (error || !data?.key) {
+      throw new Error(error?.message || 'missing key');
+    }
+
+    return {
+      apiKey: data.key,
+      securityCode: data.securityCode || '',
+    };
+  } catch {
+    return getEnvAMapConfig();
+  }
+}
+
+function formatLngLat(lng: number, lat: number): string {
+  return `${lng.toFixed(6)},${lat.toFixed(6)}`;
+}
+
+function getStaticMapSize(container: HTMLDivElement | null): string {
+  const fallbackWidth = 960;
+  const fallbackHeight = 640;
+
+  let width = Math.round(container?.clientWidth || fallbackWidth);
+  let height = Math.round(container?.clientHeight || fallbackHeight);
+
+  const scale = Math.min(1, 1024 / Math.max(width, 1), 1024 / Math.max(height, 1));
+  width = Math.max(320, Math.round(width * scale));
+  height = Math.max(320, Math.round(height * scale));
+
+  return `${width}*${height}`;
+}
+
+function getStaticMarkerLabel(location: LocationPoint, total: number): string {
+  if (location.order === 1) {
+    return '起';
+  }
+
+  if (location.order === total) {
+    return '终';
+  }
+
+  if (location.order <= 9) {
+    return String(location.order);
+  }
+
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  return alphabet[(location.order - 10) % alphabet.length] || '途';
+}
+
+function selectStaticMapMarkers(sortedLocations: LocationPoint[]): LocationPoint[] {
+  if (sortedLocations.length <= STATIC_MAP_MAX_MARKERS) {
+    return sortedLocations;
+  }
+
+  const indexes = new Set<number>([0, sortedLocations.length - 1]);
+  const middleSlots = STATIC_MAP_MAX_MARKERS - 2;
+
+  for (let i = 0; i < middleSlots; i += 1) {
+    const ratio = (i + 1) / (middleSlots + 1);
+    const index = Math.round(ratio * (sortedLocations.length - 1));
+    indexes.add(Math.min(sortedLocations.length - 2, Math.max(1, index)));
+  }
+
+  return [...indexes]
+    .sort((a, b) => a - b)
+    .map((index) => sortedLocations[index]);
+}
+
+function buildStaticMapUrl(
+  sortedLocations: LocationPoint[],
+  apiKey: string,
+  size: string,
+): string {
+  const params = new URLSearchParams();
+  params.set('key', apiKey);
+  params.set('size', size);
+  params.set('scale', '1');
+
+  const markers = selectStaticMapMarkers(sortedLocations)
+    .map((location) => {
+      const color = location.order === 1
+        ? '0x22C55E'
+        : location.order === sortedLocations.length
+          ? '0x9333EA'
+          : '0xEF4444';
+      const markerStyle = `mid,${color},${getStaticMarkerLabel(location, sortedLocations.length)}`;
+      return `${markerStyle}:${formatLngLat(location.lng, location.lat)}`;
+    })
+    .join('|');
+
+  if (markers) {
+    params.set('markers', markers);
+  }
+
+  if (sortedLocations.length >= 2) {
+    const path = sortedLocations.map((location) => formatLngLat(location.lng, location.lat)).join(';');
+    params.set('paths', `8,0xEF4444,0.9,,:${path}`);
+  }
+
+  return `${STATIC_MAP_ENDPOINT}?${params.toString()}`;
+}
+
+function triggerBlobDownload(blob: Blob, filename: string) {
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = filename;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
 
 // --- Main Component ---
 export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
@@ -65,6 +192,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
   const polylinesRef = useRef<any[]>([]);
   const stepMarkersRef = useRef<any[]>([]);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [isExportingImage, setIsExportingImage] = useState(false);
 
   // Fetch locations from database
   const loadLocations = useCallback(() => {
@@ -88,22 +216,10 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     }
 
     (async () => {
-      let apiKey: string;
-      let securityCode: string;
-
-      try {
-        const { data, error } = await supabase.functions.invoke('amap-config');
-        if (error || !data?.key) throw new Error(error?.message || 'missing key');
-        apiKey = data.key;
-        securityCode = data.securityCode || '';
-      } catch (e) {
-        // Fallback to env vars for local dev
-        apiKey = import.meta.env.VITE_AMAP_API_KEY as string;
-        securityCode = import.meta.env.VITE_AMAP_SECURITY_CODE as string;
-        if (!apiKey) {
-          setConfigError('未配置高德地图 API Key');
-          return;
-        }
+      const { apiKey, securityCode } = await resolveAMapConfig();
+      if (!apiKey) {
+        setConfigError('未配置高德地图 API Key');
+        return;
       }
 
       window._AMapSecurityConfig = { securityJsCode: securityCode };
@@ -278,6 +394,53 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     toast.success('正在打开 Google Maps...');
     setShowExportMenu(false);
   }, [locations]);
+
+  const exportMapImage = useCallback(async () => {
+    if (locations.length === 0) {
+      toast.error('暂无可导出的地点数据');
+      return;
+    }
+
+    try {
+      setIsExportingImage(true);
+      const { apiKey } = await resolveAMapConfig();
+      if (!apiKey) {
+        throw new Error('missing amap api key');
+      }
+
+      const sortedLocations = [...locations].sort((a, b) => a.order - b.order);
+      const staticMapUrl = buildStaticMapUrl(
+        sortedLocations,
+        apiKey,
+        getStaticMapSize(mapContainerRef.current),
+      );
+
+      try {
+        const response = await fetch(staticMapUrl);
+        if (!response.ok) {
+          throw new Error(`static map request failed: ${response.status}`);
+        }
+
+        const blob = await response.blob();
+        triggerBlobDownload(blob, `trip-map-${tripId}.png`);
+        toast.success(
+          sortedLocations.length > STATIC_MAP_MAX_MARKERS
+            ? '静态地图已下载，标记点过多时会自动抽样显示'
+            : '静态地图已开始下载',
+        );
+      } catch (downloadError) {
+        console.warn('[TripMapPage] 静态地图下载失败，改为打开图片地址', downloadError);
+        window.open(staticMapUrl, '_blank', 'noopener,noreferrer');
+        toast.success('已打开高德静态图，请手动保存图片');
+      }
+    } catch (error) {
+      console.error('[TripMapPage] 导出静态地图失败', error);
+      toast.error('静态地图导出失败，请确认已开通高德 Web 服务 Key');
+    } finally {
+      setIsExportingImage(false);
+      setShowExportMenu(false);
+    }
+  }, [locations, tripId]);
 
   // Render cluster markers (zoomed out)
   const renderClusters = useCallback(() => {
@@ -763,6 +926,20 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                   <div className="text-left">
                     <div className="text-sm font-semibold text-gray-900">导出到谷歌地图</div>
                     <div className="text-[11px] text-gray-400">在 Google Maps 中打开路线</div>
+                  </div>
+                </button>
+
+                <button
+                  onClick={exportMapImage}
+                  disabled={isExportingImage}
+                  className="flex items-center gap-2.5 bg-white rounded-xl px-4 py-3 shadow-lg border border-gray-100 hover:bg-amber-50 active:scale-95 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  <div className="w-8 h-8 rounded-full bg-amber-500 flex items-center justify-center flex-shrink-0">
+                    {isExportingImage ? <Loader2 className="w-4 h-4 text-white animate-spin" /> : <ImageIcon className="w-4 h-4 text-white" />}
+                  </div>
+                  <div className="text-left">
+                    <div className="text-sm font-semibold text-gray-900">保存静态地图</div>
+                    <div className="text-[11px] text-gray-400">通过高德静态图 API 导出 PNG 图片</div>
                   </div>
                 </button>
               </motion.div>

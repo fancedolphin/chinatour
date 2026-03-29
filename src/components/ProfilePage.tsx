@@ -1,171 +1,418 @@
-import { useState } from 'react';
-import { Settings, Bookmark, Heart, Share2, History } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ChevronLeft, Settings } from 'lucide-react';
+import { toast } from 'sonner@2.0.3';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Button } from './ui/button';
-import { Badge } from './ui/badge';
-import { useAuthContext } from '../presentation/context/AuthContext';
 import { SettingsPage } from './SettingsPage';
+import { FollowButton } from './FollowButton';
+import { SharedTripFeedList } from './SharedTripFeedList';
+import { useAuthContext } from '../presentation/context/AuthContext';
+import { sharedTripService, type SharedTripCard } from '@/services/sharedTripService';
+import { followService, type PublicUserProfile } from '@/services/followService';
+import { supabase } from '@/utils/supabase/client';
 
 interface ProfilePageProps {
-  userPosts: any[];
+  viewedUserId?: string | null;
+  onBack?: () => void;
+  onOpenDetail?: (sharedTripId: string) => void;
 }
 
-export function ProfilePage({ userPosts }: ProfilePageProps) {
-  // 获取用户信息
-  const { currentUser } = useAuthContext();
-  
-  // UI状态
-  const [showSettings, setShowSettings] = useState(false);
+type ProfileTab = 'published' | 'liked';
 
-  // 显示设置页面
+function buildFallbackProfile(currentUser: NonNullable<ReturnType<typeof useAuthContext>['currentUser']>): PublicUserProfile {
+  return {
+    id: currentUser.id,
+    username: currentUser.username,
+    display_name: currentUser.displayName,
+    avatar_url: currentUser.avatar ?? null,
+    bio: currentUser.bio ?? null,
+    followers_count: 0,
+    following_count: 0,
+    language: currentUser.preferences?.language ?? 'zh',
+    theme: null,
+    created_at: currentUser.createdAt.toISOString(),
+    updated_at: currentUser.updatedAt.toISOString(),
+  };
+}
+
+export function ProfilePage({ viewedUserId, onBack, onOpenDetail }: ProfilePageProps) {
+  const { currentUser } = useAuthContext();
+  const [showSettings, setShowSettings] = useState(false);
+  const [profile, setProfile] = useState<PublicUserProfile | null>(null);
+  const [publishedTrips, setPublishedTrips] = useState<SharedTripCard[]>([]);
+  const [likedTrips, setLikedTrips] = useState<SharedTripCard[]>([]);
+  const [savedTrips, setSavedTrips] = useState<Set<string>>(new Set());
+  const [likedTripIds, setLikedTripIds] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [forkingId, setForkingId] = useState<string | null>(null);
+  const [engagementCount, setEngagementCount] = useState(0);
+  const [activeTab, setActiveTab] = useState<ProfileTab>('published');
+  const [isFollowing, setIsFollowing] = useState(false);
+
+  const targetUserId = viewedUserId ?? currentUser?.id ?? null;
+  const isOwnProfile = Boolean(currentUser && targetUserId === currentUser.id);
+
+  useEffect(() => {
+    if (!isOwnProfile && activeTab === 'liked') {
+      setActiveTab('published');
+    }
+  }, [activeTab, isOwnProfile]);
+
+  useEffect(() => {
+    setShowSettings(false);
+  }, [targetUserId]);
+
+  useEffect(() => {
+    if (!targetUserId) {
+      setLoading(false);
+      setError('请先登录后查看主页');
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadProfile = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const [{ data: profileRow, error: profileError }, published, liked, followingState] = await Promise.all([
+          supabase
+            .from('users')
+            .select('id, username, display_name, avatar_url, bio, followers_count, following_count, language, theme, created_at, updated_at')
+            .eq('id', targetUserId)
+            .maybeSingle(),
+          sharedTripService.getSharedTripsByUser(targetUserId),
+          isOwnProfile ? sharedTripService.getLikedSharedTripsByUser(targetUserId) : Promise.resolve([]),
+          currentUser && !isOwnProfile ? followService.isFollowing(targetUserId) : Promise.resolve(false),
+        ]);
+
+        if (profileError) {
+          throw new Error(profileError.message);
+        }
+
+        let nextProfile = (profileRow as PublicUserProfile | null) ?? null;
+        if (!nextProfile && isOwnProfile && currentUser) {
+          nextProfile = buildFallbackProfile(currentUser);
+        }
+        if (!nextProfile) {
+          throw new Error('用户不存在');
+        }
+
+        const interactionTripIds = Array.from(new Set([
+          ...published.map((trip) => trip.id),
+          ...liked.map((trip) => trip.id),
+        ]));
+
+        let nextLikedTripIds = new Set<string>();
+        let nextSavedTrips = new Set<string>();
+        if (currentUser && interactionTripIds.length > 0) {
+          const interactionMap = await sharedTripService.getBatchUserInteractions(interactionTripIds, currentUser.id);
+          interactionMap.forEach(({ liked: hasLiked, saved }, id) => {
+            if (hasLiked) {
+              nextLikedTripIds.add(id);
+            }
+            if (saved) {
+              nextSavedTrips.add(id);
+            }
+          });
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        setProfile(nextProfile);
+        setPublishedTrips(published);
+        setLikedTrips(liked);
+        setLikedTripIds(nextLikedTripIds);
+        setSavedTrips(nextSavedTrips);
+        setEngagementCount(published.reduce((sum, trip) => sum + trip.likesCount + trip.savesCount, 0));
+        setIsFollowing(followingState);
+      } catch (loadError) {
+        if (!cancelled) {
+          console.error('[ProfilePage] 加载失败:', loadError);
+          setError(loadError instanceof Error ? loadError.message : '加载失败');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser, isOwnProfile, targetUserId]);
+
   if (showSettings) {
     return <SettingsPage onBack={() => setShowSettings(false)} />;
   }
 
-  // Mock history trips
-  const historyTrips = [
-    {
-      id: '1',
-      destination: '伦敦 · 爱丁堡',
-      date: '2024年10月',
-      image: 'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?w=400',
-      status: 'completed',
-    },
-    {
-      id: '2',
-      destination: '北京',
-      date: '2024年9月',
-      image: 'https://images.unsplash.com/photo-1677818911820-7111f3292f9b?w=400',
-      status: 'completed',
-    },
-    {
-      id: '3',
-      destination: '上海',
-      date: '2024年8月',
-      image: 'https://images.unsplash.com/photo-1548919973-5cef591cdbc9?w=400',
-      status: 'completed',
-    },
-  ];
+  const formatDateRange = (start: string, end: string) => {
+    if (!start || !end) {
+      return '';
+    }
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    return `${startDate.getFullYear()}年${startDate.getMonth() + 1}月${startDate.getDate()}日 - ${endDate.getMonth() + 1}月${endDate.getDate()}日`;
+  };
+
+  const updateTripLikeCount = (sharedTripId: string, delta: number) => {
+    setPublishedTrips((prev) => prev.map((trip) => (
+      trip.id === sharedTripId
+        ? { ...trip, likesCount: Math.max(0, trip.likesCount + delta) }
+        : trip
+    )));
+    setLikedTrips((prev) => prev.map((trip) => (
+      trip.id === sharedTripId
+        ? { ...trip, likesCount: Math.max(0, trip.likesCount + delta) }
+        : trip
+    )));
+  };
+
+  const updateTripSaveCount = (sharedTripId: string, delta: number) => {
+    setPublishedTrips((prev) => prev.map((trip) => (
+      trip.id === sharedTripId
+        ? { ...trip, savesCount: Math.max(0, trip.savesCount + delta) }
+        : trip
+    )));
+    setLikedTrips((prev) => prev.map((trip) => (
+      trip.id === sharedTripId
+        ? { ...trip, savesCount: Math.max(0, trip.savesCount + delta) }
+        : trip
+    )));
+  };
+
+  const handleToggleLike = async (sharedTripId: string) => {
+    if (!currentUser) {
+      toast.error('请先登录');
+      return;
+    }
+
+    try {
+      const nextLiked = await sharedTripService.toggleLike(sharedTripId, currentUser.id);
+      setLikedTripIds((prev) => {
+        const next = new Set(prev);
+        if (nextLiked) {
+          next.add(sharedTripId);
+        } else {
+          next.delete(sharedTripId);
+        }
+        return next;
+      });
+
+      const isPublishedTrip = publishedTrips.some((trip) => trip.id === sharedTripId);
+      updateTripLikeCount(sharedTripId, nextLiked ? 1 : -1);
+
+      if (isOwnProfile) {
+        setLikedTrips((prev) => {
+          if (!nextLiked) {
+            return prev.filter((trip) => trip.id !== sharedTripId);
+          }
+
+          if (prev.some((trip) => trip.id === sharedTripId)) {
+            return prev;
+          }
+
+          const sourceTrip = publishedTrips.find((trip) => trip.id === sharedTripId);
+          if (!sourceTrip) {
+            return prev;
+          }
+
+          return [
+            { ...sourceTrip, likesCount: sourceTrip.likesCount + 1 },
+            ...prev,
+          ];
+        });
+      }
+
+      if (isPublishedTrip) {
+        setEngagementCount((prev) => Math.max(0, prev + (nextLiked ? 1 : -1)));
+      }
+    } catch {
+      toast.error('操作失败');
+    }
+  };
+
+  const handleToggleSave = async (sharedTripId: string) => {
+    if (!currentUser) {
+      toast.error('请先登录');
+      return;
+    }
+
+    try {
+      const nextSaved = await sharedTripService.toggleSave(sharedTripId, currentUser.id);
+      setSavedTrips((prev) => {
+        const next = new Set(prev);
+        if (nextSaved) {
+          next.add(sharedTripId);
+        } else {
+          next.delete(sharedTripId);
+        }
+        return next;
+      });
+
+      if (publishedTrips.some((trip) => trip.id === sharedTripId)) {
+        updateTripSaveCount(sharedTripId, nextSaved ? 1 : -1);
+        setEngagementCount((prev) => Math.max(0, prev + (nextSaved ? 1 : -1)));
+      }
+    } catch {
+      toast.error('操作失败');
+    }
+  };
+
+  const handleFork = async (sharedTripId: string) => {
+    if (!currentUser) {
+      toast.error('请先登录');
+      return;
+    }
+
+    try {
+      setForkingId(sharedTripId);
+      await sharedTripService.forkTrip(sharedTripId, currentUser.id);
+      toast.success('行程已导入，快去修改成你的专属路线！');
+    } catch (forkError) {
+      toast.error('导入失败：' + (forkError instanceof Error ? forkError.message : '未知错误'));
+    } finally {
+      setForkingId(null);
+    }
+  };
+
+  const displayName = profile?.display_name || (isOwnProfile ? currentUser?.displayName : null) || '旅行者';
+  const username = profile?.username || currentUser?.username || 'traveler';
+  const bio = profile?.bio || (isOwnProfile ? currentUser?.bio : null) || '这个人很低调，还没有填写简介。';
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
-      <div className="max-w-screen-xl mx-auto px-4 py-4">
-        {/* Settings Button */}
-        <div className="flex justify-end mb-4">
-          <button 
-            className="p-2 hover:bg-white rounded-xl transition-colors"
-            onClick={() => setShowSettings(true)}
-          >
-            <Settings className="w-5 h-5 text-gray-700" />
-          </button>
+      <div className="mx-auto max-w-screen-xl px-4 py-4">
+        <div className="mb-4 flex items-center justify-between">
+          {onBack ? (
+            <Button type="button" variant="ghost" size="icon" onClick={onBack}>
+              <ChevronLeft className="h-5 w-5 text-gray-700" />
+            </Button>
+          ) : (
+            <div className="h-9 w-9" />
+          )}
+
+          {isOwnProfile ? (
+            <button
+              type="button"
+              className="rounded-xl p-2 transition-colors hover:bg-white"
+              onClick={() => setShowSettings(true)}
+            >
+              <Settings className="h-5 w-5 text-gray-700" />
+            </button>
+          ) : (
+            <div className="h-9 w-9" />
+          )}
         </div>
-        
-        {/* Profile Info */}
-        <div className="bg-white rounded-xl p-4 mb-4">
-          <div className="flex items-start gap-4 mb-4">
+
+        <div className="mb-4 rounded-xl bg-white p-4 shadow-sm">
+          <div className="mb-4 flex items-start gap-4">
             <ImageWithFallback
-              src={currentUser?.avatar || "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150"}
-              alt="Profile"
-              className="w-20 h-20 rounded-full object-cover"
+              src={profile?.avatar_url || currentUser?.avatar || 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150'}
+              alt={displayName}
+              className="h-20 w-20 rounded-full object-cover"
             />
             <div className="flex-1">
-              <h2 className="text-gray-900 mb-1">{currentUser?.displayName || '小红书用户'}</h2>
-              <p className="text-sm text-gray-600 mb-3">小红书号: {currentUser?.username || '123456789'}</p>
-              <p className="text-sm text-gray-700">
-                {currentUser?.bio || '分享生活中的美好瞬间 ✨'}
-              </p>
+              <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-gray-900">{displayName}</h2>
+                  <p className="mt-1 text-sm text-gray-600">旅行者 ID: @{username}</p>
+                </div>
+                {profile && (
+                  isOwnProfile ? (
+                    <Button type="button" variant="outline" onClick={() => setShowSettings(true)}>
+                      编辑资料
+                    </Button>
+                  ) : (
+                    <FollowButton
+                      targetUserId={profile.id}
+                      initialIsFollowing={isFollowing}
+                      onToggle={(nextIsFollowing) => {
+                        setIsFollowing(nextIsFollowing);
+                        setProfile((prev) => prev
+                          ? {
+                              ...prev,
+                              followers_count: Math.max(0, prev.followers_count + (nextIsFollowing ? 1 : -1)),
+                            }
+                          : prev);
+                      }}
+                    />
+                  )
+                )}
+              </div>
+              <p className="text-sm text-gray-700">{bio}</p>
             </div>
           </div>
 
-          <div className="flex gap-8 py-3 border-t border-gray-100">
+          <div className="grid grid-cols-3 gap-4 border-t border-gray-100 py-3">
             <div className="text-center">
-              <div className="text-gray-900 mb-1">128</div>
+              <div className="text-gray-900">{profile?.following_count.toLocaleString() ?? 0}</div>
               <div className="text-xs text-gray-500">关注</div>
             </div>
             <div className="text-center">
-              <div className="text-gray-900 mb-1">2.8k</div>
+              <div className="text-gray-900">{profile?.followers_count.toLocaleString() ?? 0}</div>
               <div className="text-xs text-gray-500">粉丝</div>
             </div>
             <div className="text-center">
-              <div className="text-gray-900 mb-1">5.2k</div>
+              <div className="text-gray-900">{engagementCount.toLocaleString()}</div>
               <div className="text-xs text-gray-500">获赞与收藏</div>
             </div>
           </div>
         </div>
 
-        {/* Content Tabs */}
-        <Tabs defaultValue="history" className="w-full">
-          <TabsList className="w-full grid grid-cols-3 bg-white rounded-xl p-1 mb-4">
-            <TabsTrigger 
-              value="history" 
-              className="flex items-center gap-1 text-xs transition-all duration-200 data-[state=active]:bg-red-50 data-[state=active]:text-red-500 hover:bg-gray-50 active:scale-95"
-            >
-              <History className="w-4 h-4 transition-transform duration-200 data-[state=active]:scale-110" />
-              历史
-            </TabsTrigger>
-            <TabsTrigger 
-              value="saved" 
-              className="flex items-center gap-1 text-xs transition-all duration-200 data-[state=active]:bg-red-50 data-[state=active]:text-red-500 hover:bg-gray-50 active:scale-95"
-            >
-              <Bookmark className="w-4 h-4 transition-transform duration-200 data-[state=active]:scale-110" />
-              收藏
-            </TabsTrigger>
-            <TabsTrigger 
-              value="liked" 
-              className="flex items-center gap-1 text-xs transition-all duration-200 data-[state=active]:bg-red-50 data-[state=active]:text-red-500 hover:bg-gray-50 active:scale-95"
-            >
-              <Heart className="w-4 h-4 transition-transform duration-200 data-[state=active]:scale-110" />
-              赞过
-            </TabsTrigger>
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as ProfileTab)} className="w-full">
+          <TabsList className={isOwnProfile
+            ? 'mb-4 grid w-full grid-cols-2 rounded-xl bg-white p-1'
+            : 'mb-4 grid w-full grid-cols-1 rounded-xl bg-white p-1'}
+          >
+            <TabsTrigger value="published">发布的行程</TabsTrigger>
+            {isOwnProfile && <TabsTrigger value="liked">赞过行程</TabsTrigger>}
           </TabsList>
 
-          <TabsContent value="history">
-            <div className="space-y-3">
-              {historyTrips.map((trip) => (
-                <div
-                  key={trip.id}
-                  className="bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow cursor-pointer"
-                >
-                  <div className="flex gap-3">
-                    <ImageWithFallback
-                      src={trip.image}
-                      alt={trip.destination}
-                      className="w-24 h-24 object-cover flex-shrink-0"
-                    />
-                    <div className="flex-1 p-3 flex flex-col justify-between">
-                      <div>
-                        <h4 className="text-gray-900 mb-1">{trip.destination}</h4>
-                        <p className="text-sm text-gray-500">{trip.date}</p>
-                      </div>
-                      <Badge variant="secondary" className="w-fit">
-                        已完成
-                      </Badge>
-                    </div>
-                    <div className="p-3 flex flex-col justify-center gap-2">
-                      <Button size="sm" variant="ghost">
-                        <Share2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+          <TabsContent value="published">
+            <SharedTripFeedList
+              trips={publishedTrips}
+              loading={loading}
+              error={error}
+              emptyMessage={isOwnProfile ? '你还没有发布公开行程' : 'TA 还没有发布公开行程'}
+              savedTrips={savedTrips}
+              likedTrips={likedTripIds}
+              forkingId={forkingId}
+              onToggleSave={handleToggleSave}
+              onToggleLike={handleToggleLike}
+              onFork={handleFork}
+              onOpenDetail={onOpenDetail}
+              formatDateRange={formatDateRange}
+              onRetry={() => window.location.reload()}
+            />
           </TabsContent>
 
-          <TabsContent value="saved">
-            <div className="bg-white rounded-xl p-12 text-center">
-              <Bookmark className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <p className="text-gray-400">暂无收藏内容</p>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="liked">
-            <div className="bg-white rounded-xl p-12 text-center">
-              <Heart className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <p className="text-gray-400">暂无点赞内容</p>
-            </div>
-          </TabsContent>
+          {isOwnProfile && (
+            <TabsContent value="liked">
+              <SharedTripFeedList
+                trips={likedTrips}
+                loading={loading}
+                error={error}
+                emptyMessage="你还没有赞过公开行程"
+                savedTrips={savedTrips}
+                likedTrips={likedTripIds}
+                forkingId={forkingId}
+                onToggleSave={handleToggleSave}
+                onToggleLike={handleToggleLike}
+                onFork={handleFork}
+                onOpenDetail={onOpenDetail}
+                formatDateRange={formatDateRange}
+                onRetry={() => window.location.reload()}
+              />
+            </TabsContent>
+          )}
         </Tabs>
       </div>
     </div>

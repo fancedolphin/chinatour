@@ -38,7 +38,18 @@
       "Bash(cd:*)",
       "mcp__supabase__apply_migration",
       "mcp__linear-server__save_project",
-      "WebFetch(domain:lbs.amap.com)"
+      "WebFetch(domain:lbs.amap.com)",
+      "mcp__linear-server__get_project",
+      "Bash(PENSIEVE=/mnt/d/chinaview/Nodb/.claude/skills/pensieve && git -C \"$PENSIEVE\" remote -v)",
+      "Bash(bash .src/scripts/run-upgrade.sh 2>&1)",
+      "Bash(PENSIEVE_PROJECT_ROOT=/mnt/d/chinaview/Nodb bash .src/scripts/run-doctor.sh --strict 2>&1)",
+      "Bash(python3:*)",
+      "Read(//mnt/d/data/**)",
+      "Bash(node -e \":*)",
+      "Bash(npm install:*)",
+      "Bash(node:*)",
+      "mcp__linear-server__list_issue_labels",
+      "mcp__linear-server__list_issue_statuses"
     ]
   },
   "enableAllProjectMcpServers": true,

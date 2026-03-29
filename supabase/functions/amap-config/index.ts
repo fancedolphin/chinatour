@@ -1,15 +1,26 @@
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type, x-application-name',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 };
 
-const AMAP_KEY = '74532255ab3d624097f260fe675838f0';
-const AMAP_SECURITY_CODE = 'f00fa54b50d07f4fd29779d1bb8d44ef';
+const AMAP_KEY = Deno.env.get('AMAP_API_KEY');
+const AMAP_SECURITY_CODE = Deno.env.get('AMAP_SECURITY_CODE') || '';
 
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
+  }
+
+  if (!AMAP_KEY) {
+    return new Response(JSON.stringify({ error: 'Missing AMAP_API_KEY secret' }), {
+      status: 500,
+      headers: {
+        ...corsHeaders,
+        'Content-Type': 'application/json',
+      },
+    });
   }
 
   return new Response(

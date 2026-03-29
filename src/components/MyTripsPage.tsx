@@ -14,6 +14,8 @@ import { sharedTripService } from '@/services/sharedTripService';
 interface Trip {
   id: string;
   destination: string;
+  startDate: string;
+  endDate: string;
   dates: string;
   duration: string;
   status: 'planning' | 'upcoming' | 'completed';
@@ -89,6 +91,8 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
       const mappedTrips: Trip[] = data.map((dbTrip: DBTrip) => ({
         id: dbTrip.id,
         destination: dbTrip.destination,
+        startDate: dbTrip.start_date,
+        endDate: dbTrip.end_date,
         dates: formatDateRange(dbTrip.start_date, dbTrip.end_date),
         duration: dbTrip.duration || calculateDuration(dbTrip.start_date, dbTrip.end_date),
         status: dbTrip.status,
@@ -422,8 +426,8 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
           trip={{
             id: shareTrip.id,
             destination: shareTrip.destination,
-            startDate: '2024-10-01',
-            endDate: '2024-10-07',
+            startDate: shareTrip.startDate,
+            endDate: shareTrip.endDate,
             budget: shareTrip.budget,
             image: shareTrip.image,
             days: parseInt(shareTrip.duration),

@@ -8,14 +8,13 @@ import { Separator } from './ui/separator';
 import { RestaurantDetailCard } from './RestaurantDetailCard';
 import { TransportDetailCard } from './TransportDetailCard';
 import { AttractionDetailCard } from './AttractionDetailCard';
-import { ActivityItem } from './ActivityItem';
-import { MealItem } from './MealItem';
 import { getMockRestaurantData, getMockTransportData, getMockAttractionData } from './mock-data';
 import { useAuthContext } from '@/presentation/context/AuthContext';
 import { tripService } from '@/services/tripService';
 import { getDestinationImageUrl } from '@/utils/tripDataTransformer';
 import { toast } from 'sonner';
-import { sendGeminiMessage, type ChatHistory } from '@/services/geminiService';
+import { tripPlanningService } from '@/services/planning/tripPlanningService';
+import type { SourceType } from '@/services/planning/contracts';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -47,6 +46,12 @@ interface Activity {
   name: string;
   description: string;
   type: 'attraction' | 'transport' | 'rest';
+  source?: SourceType;
+  confidence?: number;
+  location?: {
+    lat: number;
+    lng: number;
+  };
 }
 
 interface AIPlannerChatPageProps {
@@ -64,7 +69,6 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
   const [currentPlan, setCurrentPlan] = useState<TripPlan | null>(null);
   const [showPlanPreview, setShowPlanPreview] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const chatHistoryRef = useRef<ChatHistory>([]);
   const [expandedDays, setExpandedDays] = useState<number[]>([1]);
   const [isSaving, setIsSaving] = useState(false);
   const [savedTripId, setSavedTripId] = useState<string | null>(null);
@@ -74,24 +78,26 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
   const [selectedTransport, setSelectedTransport] = useState<any>(null);
   const [selectedAttraction, setSelectedAttraction] = useState<any>(null);
 
-  const callGemini = async (userMessage: string, showInChat: boolean) => {
+  const callPlanner = async (userMessage: string, showInChat: boolean) => {
     setIsTyping(true);
     if (showInChat) {
       setMessages(prev => [...prev, { role: 'user', content: userMessage, timestamp: new Date() }]);
     }
     try {
-      const { response, updatedHistory } = await sendGeminiMessage(
-        chatHistoryRef.current,
+      const result = await tripPlanningService.plan({
         userMessage,
-      );
-      chatHistoryRef.current = updatedHistory;
-      setMessages(prev => [...prev, { role: 'assistant', content: response.text, timestamp: new Date() }]);
-      if (response.tripPlan) {
-        setCurrentPlan(response.tripPlan as TripPlan);
-        setExpandedDays([1]);
+        currentPlan,
+      });
+
+      setMessages(prev => [...prev, { role: 'assistant', content: result.text, timestamp: new Date() }]);
+      setCurrentPlan(result.tripPlan as TripPlan);
+      setExpandedDays([1]);
+
+      if (!result.validation.can_generate) {
+        toast.warning('当前可用数据较少，建议补充更具体的目的地和偏好。');
       }
     } catch (err) {
-      console.error('[AIPlannerChatPage] Gemini 调用失败:', err);
+      console.error('[AIPlannerChatPage] TripPlanning 调用失败:', err);
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: '抱歉，AI 助手暂时无法响应，请稍后重试。',
@@ -104,8 +110,7 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
 
   useEffect(() => {
     if (initialPlan) {
-      chatHistoryRef.current = [];
-      callGemini(initialPlan, false);
+      callPlanner(initialPlan, false);
     }
   }, [initialPlan]);
 
@@ -211,7 +216,7 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
     if (!inputValue.trim() || isTyping) return;
     const message = inputValue;
     setInputValue('');
-    callGemini(message, true);
+    callPlanner(message, true);
   };
 
   const toggleDay = (day: number) => {
@@ -470,7 +475,17 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
                                 {activity.time}
                               </div>
                               <div className="flex-1">
-                                <p className="text-sm text-gray-900">{activity.name}</p>
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm text-gray-900">{activity.name}</p>
+                                  {activity.source && (
+                                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                                      {activity.source}
+                                      {typeof activity.confidence === 'number'
+                                        ? ` ${Math.round(activity.confidence * 100)}%`
+                                        : ''}
+                                    </Badge>
+                                  )}
+                                </div>
                                 <p className="text-xs text-gray-500 mt-0.5">{activity.description}</p>
                               </div>
                             </button>

@@ -1,5 +1,6 @@
-import { MapPin, Calendar, DollarSign, Star, Sparkles } from 'lucide-react';
+import { Calendar, DollarSign, MapPin, QrCode, Sparkles, Star } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
+import { formatTripDateRange } from '@/utils/tripShare';
 
 interface TripShareCardProps {
   trip: {
@@ -11,124 +12,103 @@ interface TripShareCardProps {
     image: string;
     highlights?: string[];
     days?: number;
+    qrCodeDataUrl?: string | null;
   };
   showQR?: boolean;
 }
 
 export function TripShareCard({ trip, showQR = false }: TripShareCardProps) {
-  const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  };
+  const dateLabel = formatTripDateRange(trip.startDate, trip.endDate, 'en-US');
 
   return (
-    <div className="w-[600px] bg-white rounded-3xl overflow-hidden shadow-2xl">
-      {/* Header with Gradient Overlay */}
+    <div className="w-[600px] overflow-hidden rounded-3xl bg-white shadow-2xl">
       <div className="relative h-80">
         <ImageWithFallback
           src={trip.image}
           alt={trip.destination}
-          className="w-full h-full object-cover"
+          className="h-full w-full object-cover"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
-        
-        {/* Destination Title */}
-        <div className="absolute bottom-0 left-0 right-0 p-8">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-red-500 to-pink-500 rounded-xl flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-white" />
+
+        <div className="absolute left-6 right-6 top-6 flex items-start justify-between">
+          <div className="rounded-full bg-white/95 px-4 py-2 text-sm text-gray-900 shadow-sm">
+            {dateLabel}
+          </div>
+          {showQR && trip.qrCodeDataUrl ? (
+            <div className="rounded-2xl bg-white/95 p-2 shadow-sm">
+              <div className="mb-1 flex items-center gap-1 text-[10px] uppercase tracking-[0.22em] text-gray-500">
+                <QrCode className="h-3 w-3" />
+                Scan
+              </div>
+              <img src={trip.qrCodeDataUrl} alt={`${trip.destination} QR`} className="h-20 w-20 rounded-xl bg-white object-cover" />
             </div>
-            <span className="text-white/90 text-sm">AI Planned Trip</span>
-          </div>
-          <h1 className="text-white text-4xl mb-2 tracking-tight">
-            {trip.destination}
-          </h1>
-          <div className="flex items-center gap-2 text-white/90">
-            <MapPin className="w-4 h-4" />
-            <span className="text-sm">Explore & Discover</span>
-          </div>
+          ) : null}
         </div>
 
-        {/* Corner Badge */}
-        <div className="absolute top-6 right-6 bg-white/95 backdrop-blur-sm rounded-2xl px-4 py-2">
-          <span className="text-sm text-gray-900">{trip.days || 5} Days</span>
+        <div className="absolute bottom-0 left-0 right-0 p-8">
+          <div className="mb-3 flex items-center gap-2">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-red-500 to-pink-500">
+              <Sparkles className="h-5 w-5 text-white" />
+            </div>
+            <span className="text-sm text-white/90">AI Planned Trip</span>
+          </div>
+          <h1 className="mb-2 text-4xl tracking-tight text-white">
+            {trip.destination}
+          </h1>
+          <div className="flex items-center gap-4 text-sm text-white/90">
+            <span className="flex items-center gap-1">
+              <MapPin className="h-4 w-4" />
+              {trip.days || 1} Days
+            </span>
+            {trip.budget && (
+              <span className="flex items-center gap-1">
+                <DollarSign className="h-4 w-4" />
+                {trip.budget}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Content Section */}
-      <div className="p-8">
-        {/* Date & Budget */}
-        <div className="grid grid-cols-2 gap-4 mb-6">
-          <div className="bg-gray-50 rounded-2xl p-4">
-            <div className="flex items-center gap-2 text-gray-600 mb-2">
-              <Calendar className="w-4 h-4" />
-              <span className="text-xs uppercase tracking-wide">Dates</span>
-            </div>
-            <p className="text-gray-900 text-sm">
-              {formatDate(trip.startDate)}
-            </p>
-            <p className="text-gray-900 text-sm">
-              to {formatDate(trip.endDate)}
-            </p>
+      <div className="grid grid-cols-[1.1fr_0.9fr] gap-6 p-8">
+        <div>
+          <div className="mb-4 flex items-center gap-2">
+            <Star className="h-4 w-4 text-yellow-500" />
+            <h3 className="text-sm uppercase tracking-[0.18em] text-gray-500">Highlights</h3>
           </div>
-
-          {trip.budget && (
-            <div className="bg-gray-50 rounded-2xl p-4">
-              <div className="flex items-center gap-2 text-gray-600 mb-2">
-                <DollarSign className="w-4 h-4" />
-                <span className="text-xs uppercase tracking-wide">Budget</span>
+          <div className="space-y-3">
+            {(trip.highlights ?? []).slice(0, 3).map((highlight, index) => (
+              <div
+                key={`${highlight}-${index}`}
+                className="flex items-start gap-3 rounded-2xl bg-gray-50 px-4 py-3 text-sm text-gray-700"
+              >
+                <span className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-red-500 to-pink-500 text-xs text-white">
+                  {index + 1}
+                </span>
+                <span>{highlight}</span>
               </div>
-              <p className="text-gray-900 text-lg">
-                {trip.budget}
-              </p>
-            </div>
-          )}
+            ))}
+          </div>
         </div>
 
-        {/* Highlights */}
-        {trip.highlights && trip.highlights.length > 0 && (
-          <div className="mb-6">
-            <div className="flex items-center gap-2 mb-3">
-              <Star className="w-4 h-4 text-yellow-500" />
-              <h3 className="text-gray-900 text-sm uppercase tracking-wide">Highlights</h3>
+        <div className="rounded-3xl border border-gray-100 bg-gradient-to-br from-orange-50 to-rose-50 p-5">
+          <div className="mb-4 text-xs uppercase tracking-[0.18em] text-gray-500">Snapshot</div>
+          <div className="space-y-4 text-sm text-gray-700">
+            <div className="flex items-start gap-3">
+              <Calendar className="mt-0.5 h-4 w-4 text-red-500" />
+              <span>{dateLabel}</span>
             </div>
-            <div className="space-y-2">
-              {trip.highlights.slice(0, 3).map((highlight, index) => (
-                <div
-                  key={index}
-                  className="flex items-start gap-3 text-gray-700 text-sm"
-                >
-                  <span className="w-6 h-6 bg-gradient-to-br from-red-500 to-pink-500 rounded-full flex items-center justify-center text-white text-xs flex-shrink-0 mt-0.5">
-                    {index + 1}
-                  </span>
-                  <span>{highlight}</span>
-                </div>
-              ))}
+            <div className="flex items-start gap-3">
+              <MapPin className="mt-0.5 h-4 w-4 text-red-500" />
+              <span>{trip.destination}</span>
             </div>
+            {trip.budget && (
+              <div className="flex items-start gap-3">
+                <DollarSign className="mt-0.5 h-4 w-4 text-red-500" />
+                <span>{trip.budget}</span>
+              </div>
+            )}
           </div>
-        )}
-
-        {/* Footer */}
-        <div className="pt-6 border-t border-gray-200 flex items-center justify-between">
-          <div>
-            <p className="text-gray-500 text-xs mb-1">Planned with</p>
-            <p className="text-gray-900 font-medium">Smart Travel AI</p>
-          </div>
-
-          {showQR && (
-            <div className="w-20 h-20 bg-gray-200 rounded-xl flex items-center justify-center">
-              <span className="text-xs text-gray-500">QR Code</span>
-            </div>
-          )}
-
-          {!showQR && (
-            <div className="text-right">
-              <p className="text-gray-500 text-xs mb-1">Join us at</p>
-              <p className="text-transparent bg-clip-text bg-gradient-to-r from-red-500 to-pink-500 font-medium">
-                smarttravel.ai
-              </p>
-            </div>
-          )}
         </div>
       </div>
     </div>

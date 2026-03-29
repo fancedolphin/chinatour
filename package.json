@@ -39,9 +39,12 @@
             "hono": "*",
             "html2canvas": "*",
             "input-otp": "^1.4.2",
+            "jspdf": "^4.2.1",
+            "jspdf-autotable": "^5.0.7",
             "lucide-react": "^0.487.0",
             "motion": "^12.36.0",
             "next-themes": "^0.4.6",
+            "qrcode": "^1.5.4",
             "react": "^18.3.1",
             "react-day-picker": "^8.10.1",
             "react-dom": "^18.3.1",
@@ -64,6 +67,7 @@
             "dev": "vite",
             "build": "vite build",
             "seed:trips": "node scripts/seed-mock-trips.mjs",
-            "seed:trip-map": "node scripts/seed-trip-map-locations.mjs"
+            "seed:trip-map": "node scripts/seed-trip-map-locations.mjs",
+            "seed:rag-mvp": "node scripts/seed-rag-mvp.mjs"
       }
 }

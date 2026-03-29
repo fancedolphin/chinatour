@@ -9,8 +9,10 @@ import { ShareTripModal } from './ShareTripModal';
 import { AttractionDetailCard } from './AttractionDetailCard';
 import { RestaurantDetailCard } from './RestaurantDetailCard';
 import { TransportDetailCard } from './TransportDetailCard';
+import { toast } from 'sonner@2.0.3';
 import { supabase } from '@/utils/supabase/client';
 import { tripService, type TripDetail } from '@/services/tripService';
+import { downloadTripPDF } from '@/services/exportService';
 import { amapService } from '@/services/amapService';
 
 interface Activity {
@@ -79,11 +81,14 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dbTripData, setDbTripData] = useState<TripDetail | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Mock data
   const tripData = {
     id: tripId,
     destination: '伦敦 · 爱丁堡',
+    startDate: '2024-10-01',
+    endDate: '2024-10-07',
     dates: '2024年10月1日 - 10月7日',
     duration: '7天',
     budget: '£3,500',
@@ -247,6 +252,8 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
   const actualTripData = dbTripData ? {
     id: dbTripData.id,
     destination: dbTripData.destination,
+    startDate: dbTripData.start_date,
+    endDate: dbTripData.end_date,
     dates: `${dbTripData.start_date} - ${dbTripData.end_date}`,
     duration: dbTripData.duration,
     budget: dbTripData.budget,
@@ -670,9 +677,22 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
     );
   };
 
-  const handleExport = () => {
-    // Mock export functionality
-    alert('正在导出行程为PDF...');
+  const handleExport = async () => {
+    if (!dbTripData) {
+      toast.error('行程数据尚未加载完成');
+      return;
+    }
+
+    try {
+      setIsExporting(true);
+      await downloadTripPDF(dbTripData);
+      toast.success('PDF 已开始下载');
+    } catch (exportError) {
+      console.error('[TripDetailPage] 导出 PDF 失败:', exportError);
+      toast.error(exportError instanceof Error ? exportError.message : '导出 PDF 失败');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const handleShare = () => {
@@ -928,8 +948,8 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
               <Button variant="ghost" size="sm" onClick={handleShare}>
                 <Share2 className="w-4 h-4" />
               </Button>
-              <Button variant="ghost" size="sm" onClick={handleExport}>
-                <Download className="w-4 h-4" />
+              <Button variant="ghost" size="sm" onClick={handleExport} disabled={isExporting}>
+                {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
               </Button>
             </div>
           </div>
@@ -1140,16 +1160,12 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
           trip={{
             id: actualTripData.id,
             destination: actualTripData.destination,
-            startDate: '2024-10-01',
-            endDate: '2024-10-07',
+            startDate: dbTripData?.start_date || '',
+            endDate: dbTripData?.end_date || '',
             budget: actualTripData.budget,
             image: actualTripData.coverImage,
-            days: 7,
-            highlights: [
-              'Visit iconic landmarks',
-              'Explore local cuisine',
-              'Experience rich culture',
-            ],
+            days: actualItinerary.length || undefined,
+            highlights: actualItinerary.flatMap((day) => day.activities.map((activity) => activity.name)).slice(0, 3),
           }}
           onClose={() => setShowShareModal(false)}
         />

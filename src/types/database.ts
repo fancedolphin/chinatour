@@ -147,6 +147,42 @@ export type Database = {
           },
         ]
       }
+      comment_likes: {
+        Row: {
+          comment_id: string
+          created_at: string | null
+          id: string
+          user_id: string
+        }
+        Insert: {
+          comment_id: string
+          created_at?: string | null
+          id?: string
+          user_id: string
+        }
+        Update: {
+          comment_id?: string
+          created_at?: string | null
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "comment_likes_comment_id_fkey"
+            columns: ["comment_id"]
+            isOneToOne: false
+            referencedRelation: "trip_comments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "comment_likes_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       destinations: {
         Row: {
           average_budget_daily: string | null
@@ -574,6 +610,64 @@ export type Database = {
           },
         ]
       }
+      trip_comments: {
+        Row: {
+          content: string
+          created_at: string | null
+          id: string
+          is_deleted: boolean | null
+          likes_count: number | null
+          parent_id: string | null
+          shared_trip_id: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string | null
+          id?: string
+          is_deleted?: boolean | null
+          likes_count?: number | null
+          parent_id?: string | null
+          shared_trip_id: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string | null
+          id?: string
+          is_deleted?: boolean | null
+          likes_count?: number | null
+          parent_id?: string | null
+          shared_trip_id?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "trip_comments_shared_trip_id_fkey"
+            columns: ["shared_trip_id"]
+            isOneToOne: false
+            referencedRelation: "shared_trips"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "trip_comments_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "trip_comments_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "trip_comments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       trip_examples: {
         Row: {
           budget_range: string | null
@@ -769,8 +863,51 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "trips_forked_from_fkey"
+            columns: ["forked_from"]
+            isOneToOne: false
+            referencedRelation: "trips"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "trips_user_id_fkey"
             columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_follows: {
+        Row: {
+          created_at: string
+          follower_id: string
+          following_id: string
+          id: string
+        }
+        Insert: {
+          created_at?: string
+          follower_id: string
+          following_id: string
+          id?: string
+        }
+        Update: {
+          created_at?: string
+          follower_id?: string
+          following_id?: string
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_follows_follower_id_fkey"
+            columns: ["follower_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_follows_following_id_fkey"
+            columns: ["following_id"]
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -881,6 +1018,8 @@ export type Database = {
           bio: string | null
           created_at: string | null
           display_name: string | null
+          followers_count: number
+          following_count: number
           id: string
           language: string | null
           theme: string | null
@@ -892,6 +1031,8 @@ export type Database = {
           bio?: string | null
           created_at?: string | null
           display_name?: string | null
+          followers_count?: number
+          following_count?: number
           id: string
           language?: string | null
           theme?: string | null
@@ -903,6 +1044,8 @@ export type Database = {
           bio?: string | null
           created_at?: string | null
           display_name?: string | null
+          followers_count?: number
+          following_count?: number
           id?: string
           language?: string | null
           theme?: string | null
