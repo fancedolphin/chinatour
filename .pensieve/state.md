@@ -1,8 +1,8 @@
 # Pensieve Project State
 
 ## Lifecycle State
-- Last Event: doctor
-- Last Note: doctor summary: status=PASS, must_fix=0, should_fix=0, info=0, next=none
+- Last Event: self-improve
+- Last Note: Day Bar portal fix: captured AMap stacking context knowledge, portal maxim, and HUD consolidation decision
 
 ## Project Paths
 - Project Root: `/mnt/d/chinaview/Nodb`

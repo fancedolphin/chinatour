@@ -93,10 +93,10 @@ export function parseDates(dateStr: string): { startDate: string; endDate: strin
  */
 export function mapActivityType(type: 'attraction' | 'transport' | 'rest' | 'meal'): string {
   const typeMap: Record<string, string> = {
-    attraction: 'sightseeing',
-    transport: 'transportation',
-    rest: 'leisure',
-    meal: 'dining',
+    attraction: 'attraction',
+    transport: 'transport',
+    rest: 'other',
+    meal: 'meal',
   };
 
   if (!typeMap[type]) {

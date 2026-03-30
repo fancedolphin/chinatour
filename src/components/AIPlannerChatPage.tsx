@@ -11,7 +11,7 @@ import { AttractionDetailCard } from './AttractionDetailCard';
 import { getMockRestaurantData, getMockTransportData, getMockAttractionData } from './mock-data';
 import { useAuthContext } from '@/presentation/context/AuthContext';
 import { tripService } from '@/services/tripService';
-import { getDestinationImageUrl } from '@/utils/tripDataTransformer';
+import { transformTripPlanWithEnhancement, type TripPlan as PersistedTripPlan } from '@/utils/tripDataTransformer';
 import { toast } from 'sonner';
 import { tripPlanningService } from '@/services/planning/tripPlanningService';
 import type { SourceType } from '@/services/planning/contracts';
@@ -51,6 +51,7 @@ interface Activity {
   location?: {
     lat: number;
     lng: number;
+    address?: string;
   };
 }
 
@@ -59,6 +60,56 @@ interface AIPlannerChatPageProps {
   initialPlan?: string;
   onSaveSuccess?: () => void;
   onOpenMap?: (tripId: string) => void;
+}
+
+function buildPersistedPlan(plan: TripPlan): PersistedTripPlan {
+  return {
+    destination: plan.destination,
+    dates: plan.dates,
+    budget: plan.budget,
+    days: plan.days.map((day) => {
+      const mealActivities = [
+        { slot: '早餐', info: day.meals.breakfast, time: '08:00' },
+        { slot: '午餐', info: day.meals.lunch, time: '12:00' },
+        { slot: '晚餐', info: day.meals.dinner, time: '19:00' },
+      ]
+        .filter((meal) => meal.info)
+        .map((meal) => {
+          const [name, ...descriptionParts] = meal.info!.split(' - ');
+          const description = descriptionParts.join(' - ').trim();
+
+          return {
+            time: meal.time,
+            name: name.trim(),
+            description: description || meal.info!,
+            type: 'meal' as const,
+          };
+        });
+
+      return {
+        day: day.day,
+        theme: day.theme,
+        activities: [
+          ...day.activities.map((activity) => ({
+            time: activity.time,
+            name: activity.name,
+            description: activity.description,
+            type: activity.type,
+            geoCoordinates: activity.location
+              ? {
+                  lat: activity.location.lat,
+                  lng: activity.location.lng,
+                }
+              : undefined,
+            address: activity.location?.address,
+          })),
+          ...mealActivities,
+        ],
+        meals: {},
+        alternativePlan: day.alternativePlan,
+      };
+    }),
+  };
 }
 
 export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMap }: AIPlannerChatPageProps) {
@@ -72,6 +123,7 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
   const [expandedDays, setExpandedDays] = useState<number[]>([1]);
   const [isSaving, setIsSaving] = useState(false);
   const [savedTripId, setSavedTripId] = useState<string | null>(null);
+  const isMountedRef = useRef(true);
   
   // Detail card states
   const [selectedRestaurant, setSelectedRestaurant] = useState<any>(null);
@@ -89,24 +141,36 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
         currentPlan,
       });
 
-      setMessages(prev => [...prev, { role: 'assistant', content: result.text, timestamp: new Date() }]);
-      setCurrentPlan(result.tripPlan as TripPlan);
-      setExpandedDays([1]);
+      if (isMountedRef.current) {
+        setMessages(prev => [...prev, { role: 'assistant', content: result.text, timestamp: new Date() }]);
+        setCurrentPlan(result.tripPlan as TripPlan);
+        setExpandedDays([1]);
+      }
 
       if (!result.validation.can_generate) {
         toast.warning('当前可用数据较少，建议补充更具体的目的地和偏好。');
       }
     } catch (err) {
       console.error('[AIPlannerChatPage] TripPlanning 调用失败:', err);
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: '抱歉，AI 助手暂时无法响应，请稍后重试。',
-        timestamp: new Date(),
-      }]);
+      if (isMountedRef.current) {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: '抱歉，AI 助手暂时无法响应，请稍后重试。',
+          timestamp: new Date(),
+        }]);
+      }
     } finally {
-      setIsTyping(false);
+      if (isMountedRef.current) {
+        setIsTyping(false);
+      }
     }
   };
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (initialPlan) {
@@ -127,77 +191,16 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
 
     setIsSaving(true);
     try {
-      // 解析日期字符串 "2024年10月1日 - 10月7日"
-      const dateMatch = currentPlan.dates.match(
-        /(\d{4})年(\d{1,2})月(\d{1,2})日\s*[-–]\s*(?:\d{4}年)?(\d{1,2})月(\d{1,2})日/
+      const transformedData = await transformTripPlanWithEnhancement(
+        buildPersistedPlan(currentPlan),
+        currentUser.id,
       );
-      let startDate: string;
-      let endDate: string;
-      if (dateMatch) {
-        const [, year, sm, sd, em, ed] = dateMatch;
-        startDate = `${year}-${sm.padStart(2, '0')}-${sd.padStart(2, '0')}`;
-        endDate = `${year}-${em.padStart(2, '0')}-${ed.padStart(2, '0')}`;
-      } else {
-        const today = new Date();
-        startDate = today.toISOString().split('T')[0];
-        const end = new Date(today);
-        end.setDate(today.getDate() + currentPlan.days.length - 1);
-        endDate = end.toISOString().split('T')[0];
+
+      const savedTrip = await tripService.createTripWithItineraries(transformedData);
+
+      if (!isMountedRef.current) {
+        return;
       }
-
-      const activityTypeMap: Record<string, string> = {
-        attraction: 'attraction',
-        transport: 'transport',
-        rest: 'other',
-      };
-
-      const itineraries = currentPlan.days.map((day) => {
-        const activities: any[] = day.activities.map((act, idx) => ({
-          time: act.time,
-          type: activityTypeMap[act.type] || 'other',
-          name: act.name,
-          description: act.description,
-          order_index: idx,
-        }));
-
-        const mealBase = activities.length;
-        const meals = [
-          { slot: '早餐', info: day.meals.breakfast, time: '08:00' },
-          { slot: '午餐', info: day.meals.lunch, time: '12:00' },
-          { slot: '晚餐', info: day.meals.dinner, time: '19:00' },
-        ].filter((m) => m.info);
-
-        meals.forEach(({ slot, info, time }, idx) => {
-          const [name, desc] = info!.split(' - ');
-          activities.push({
-            time,
-            type: 'meal',
-            name: `${slot}：${name.trim()}`,
-            description: desc || info!,
-            order_index: mealBase + idx,
-          });
-        });
-
-        return {
-          itinerary: { day_number: day.day, theme: day.theme, date: null },
-          activities,
-        };
-      });
-
-      const savedTrip = await tripService.createTripWithItineraries({
-        trip: {
-          user_id: currentUser.id,
-          destination: currentPlan.destination,
-          start_date: startDate,
-          end_date: endDate,
-          duration: `${currentPlan.days.length}天`,
-          budget: currentPlan.budget,
-          image_url: getDestinationImageUrl(currentPlan.destination),
-          status: 'planning',
-          source: 'ai',
-        },
-        itineraries,
-      });
 
       setSavedTripId(savedTrip.id);
       toast.success('行程已保存，可直接查看地图');
@@ -206,9 +209,13 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
         onSaveSuccess?.();
       }
     } catch (err) {
-      toast.error('保存失败：' + (err instanceof Error ? err.message : '未知错误'));
+      if (isMountedRef.current) {
+        toast.error('保存失败：' + (err instanceof Error ? err.message : '未知错误'));
+      }
     } finally {
-      setIsSaving(false);
+      if (isMountedRef.current) {
+        setIsSaving(false);
+      }
     }
   };
 
@@ -264,7 +271,7 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
             onClick={() => setShowPlanPreview(!showPlanPreview)}
             className="md:hidden"
           >
-            {showPlanPreview ? '隐藏' : '显示'}方案
+            <span>{showPlanPreview ? '隐藏方案' : '显示方案'}</span>
           </Button>
         </div>
       </div>
@@ -563,7 +570,7 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
                   }}
                 >
                   <MapPin className="w-4 h-4 mr-2" />
-                  显示地图
+                  <span>显示地图</span>
                 </Button>
                 <Button
                   className="flex-1 bg-red-500 hover:bg-red-600"
@@ -571,11 +578,11 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
                   onClick={handleSaveTrip}
                   disabled={isSaving || !currentPlan}
                 >
-                  {isSaving ? (
-                    <><Loader2 className="w-4 h-4 mr-1 animate-spin" />保存中...</>
-                  ) : (
-                    '保存行程'
-                  )}
+                  <Loader2
+                    className={`w-4 h-4 ${isSaving ? 'mr-1 animate-spin' : 'mr-1 opacity-0'}`}
+                    aria-hidden="true"
+                  />
+                  <span>{isSaving ? '保存中...' : '保存行程'}</span>
                 </Button>
               </div>
             </div>

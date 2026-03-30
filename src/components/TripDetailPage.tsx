@@ -272,10 +272,11 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
           .map((act) => ({
             id: act.id,
             time: act.time || '',
-            type: act.type === 'dining' ? 'meal' as const :
-                  act.type === 'sightseeing' ? 'attraction' as const :
-                  act.type === 'transportation' ? 'transport' as const :
-                  'attraction' as const,
+            type:
+              act.type === 'dining' || act.type === 'meal' ? 'meal' as const :
+              act.type === 'sightseeing' || act.type === 'attraction' ? 'attraction' as const :
+              act.type === 'transportation' || act.type === 'transport' ? 'transport' as const :
+              'rest' as const,
             name: act.name || '',
             description: act.description || undefined,
             duration: act.duration || undefined,

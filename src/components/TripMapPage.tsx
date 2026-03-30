@@ -1,10 +1,18 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { ChevronLeft, MapPin, Navigation, Heart, Map as MapIcon, Play, ExternalLink, Share2, Image as ImageIcon, Loader2 } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
+import { ChevronLeft, MapPin, Navigation, Heart, Map as MapIcon, Play, ExternalLink, Share2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { toast } from 'sonner@2.0.3';
 import { motion, AnimatePresence } from 'motion/react';
 import { tripMapService } from '../services/tripMapService';
 import type { LocationPoint } from '../services/tripMapService';
+import { tripService } from '../services/tripService';
+import type { TripDetail } from '../services/tripService';
+import { getDayColor } from './map/dayColors';
+import { ExportScopeSheet } from './map/ExportScopeSheet';
+import type { ExportApp } from './map/ExportScopeSheet';
+import { buildExportScopes, exportToAMap, exportToGoogleMaps, exportToAppleMaps } from '../utils/mapExport';
+import type { ExportScope } from '../utils/mapExport';
 import { supabase } from '../utils/supabase/client';
 
 declare global {
@@ -44,6 +52,65 @@ function buildClusters(locations: LocationPoint[]): CityCluster[] {
     clusters.push({ name: city, lat: avgLat, lng: avgLng, count: locs.length, locations: locs });
   });
   return clusters;
+}
+
+type LayerMode = 'all' | number;
+
+interface DayGroup {
+  day: number;
+  label: string;
+  locations: LocationPoint[];
+}
+
+function inferDayFromLocationOrder(location: LocationPoint, validDays: Set<number>): number | null {
+  const inferredDay = Math.floor(location.order / 100);
+  return validDays.has(inferredDay) ? inferredDay : null;
+}
+
+// Match trip_map_locations to days, preferring encoded order_index and
+// falling back to the closest activity coordinate for older data.
+function assignLocationsToDays(
+  locations: LocationPoint[],
+  tripDetail: TripDetail | null,
+): Map<string, number> {
+  const locDayMap = new Map<string, number>();
+  if (!tripDetail) return locDayMap;
+
+  const validDays = new Set(tripDetail.trip_itineraries.map((itin) => itin.day_number));
+
+  const activities = tripDetail.trip_itineraries
+    .sort((a, b) => a.day_number - b.day_number)
+    .flatMap((itin) =>
+      (itin.activities || [])
+        .filter((a) => Number.isFinite(a.location_lat) && Number.isFinite(a.location_lng))
+        .map((a) => ({ dayNumber: itin.day_number, lat: a.location_lat!, lng: a.location_lng!, name: a.name })),
+    );
+
+  for (const loc of locations) {
+    const inferredDay = inferDayFromLocationOrder(loc, validDays);
+    if (inferredDay !== null) {
+      locDayMap.set(loc.id, inferredDay);
+      continue;
+    }
+
+    if (activities.length === 0) {
+      continue;
+    }
+
+    let bestDist = Infinity;
+    let bestDay = activities[0].dayNumber;
+    for (const act of activities) {
+      const dLat = loc.lat - act.lat;
+      const dLng = loc.lng - act.lng;
+      const dist = dLat * dLat + dLng * dLng;
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestDay = act.dayNumber;
+      }
+    }
+    locDayMap.set(loc.id, bestDay);
+  }
+  return locDayMap;
 }
 
 const ZOOM_THRESHOLD = 11;
@@ -191,8 +258,87 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
   const markersRef = useRef<any[]>([]);
   const polylinesRef = useRef<any[]>([]);
   const stepMarkersRef = useRef<any[]>([]);
-  const [showExportMenu, setShowExportMenu] = useState(false);
-  const [isExportingImage, setIsExportingImage] = useState(false);
+  const [showExportSheet, setShowExportSheet] = useState(false);
+
+  // Day layer state
+  const [activeLayer, setActiveLayer] = useState<LayerMode>('all');
+  const [tripDetail, setTripDetail] = useState<TripDetail | null>(null);
+
+  // Fetch trip detail for itineraries / day grouping
+  useEffect(() => {
+    console.log('[TripMapPage] 开始加载行程详情, tripId:', tripId);
+    tripService.getTripDetail(tripId)
+      .then((detail) => {
+        console.log('[TripMapPage] 行程详情加载成功, itineraries:', detail.trip_itineraries.length,
+          'activities:', detail.trip_itineraries.map(i => i.activities?.length ?? 0));
+        setTripDetail(detail);
+      })
+      .catch((err) => console.error('[TripMapPage] 加载行程详情失败（图层功能降级）', err));
+  }, [tripId]);
+
+  // Build day groups from locations + itineraries
+  const locDayMap = useMemo(() => {
+    const map = assignLocationsToDays(locations, tripDetail);
+    if (map.size > 0) {
+      console.log('[TripMapPage] locDayMap:', Object.fromEntries(map));
+    }
+    return map;
+  }, [locations, tripDetail]);
+
+  const itineraryDays = useMemo(() => {
+    if (!tripDetail) return [];
+    return Array.from(
+      new Set(
+        [...tripDetail.trip_itineraries]
+          .sort((a, b) => a.day_number - b.day_number)
+          .map((itin) => itin.day_number),
+      ),
+    );
+  }, [tripDetail]);
+
+  const dayGroups = useMemo<DayGroup[]>(() => {
+    if (!tripDetail) {
+      console.log('[TripMapPage] tripDetail is null, dayGroups=[]');
+      return [];
+    }
+    const itineraries = [...tripDetail.trip_itineraries].sort((a, b) => a.day_number - b.day_number);
+    const groups = itineraries
+      .map((itin) => ({
+        day: itin.day_number,
+        label: itin.theme ?? `第${itin.day_number}天`,
+        locations: locations.filter((loc) => locDayMap.get(loc.id) === itin.day_number),
+      }));
+    console.log('[TripMapPage] dayGroups:', groups.map(g => ({ day: g.day, count: g.locations.length })));
+    return groups;
+  }, [tripDetail, locations, locDayMap]);
+
+  const showOverviewTab = itineraryDays.length > 1;
+
+  // Export scopes derived from trip detail
+  const exportScopes = useMemo(
+    () => (tripDetail ? buildExportScopes(tripDetail.trip_itineraries) : []),
+    [tripDetail],
+  );
+
+  const initialScopeIndex = useMemo(() => {
+    if (activeLayer === 'all') return 0;
+    const idx = exportScopes.findIndex((s) => s.type === 'day' && s.day === activeLayer);
+    return idx >= 0 ? idx : 0;
+  }, [activeLayer, exportScopes]);
+
+  const handleExport = useCallback((scope: ExportScope, app: ExportApp) => {
+    if (app === 'amap') exportToAMap(scope);
+    else if (app === 'google') exportToGoogleMaps(scope);
+    else exportToAppleMaps(scope);
+    setShowExportSheet(false);
+  }, []);
+
+  // Visible locations filtered by active layer
+  const visibleLocations = useMemo(() => {
+    if (activeLayer === 'all' || dayGroups.length === 0) return locations;
+    const group = dayGroups.find((g) => g.day === activeLayer);
+    return group ? group.locations : locations;
+  }, [activeLayer, dayGroups, locations]);
 
   // Fetch locations from database
   const loadLocations = useCallback(() => {
@@ -276,38 +422,45 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
   // Render route polyline (always visible on map)
   const renderRoutePolyline = useCallback(() => {
     if (!mapRef.current || !window.AMap) return;
-    // Only redraw if not already drawn
-    if (polylinesRef.current.length > 0) return;
 
-    const sorted = [...locations].sort((a, b) => a.order - b.order);
-    if (sorted.length < 2) return;
+    // Determine which groups to draw
+    const isOverview = activeLayer === 'all';
+    const groupsToDraw = dayGroups.length > 0
+      ? (isOverview ? dayGroups : dayGroups.filter((g) => g.day === activeLayer))
+      : [{ day: 0, label: '', locations: visibleLocations }];
 
-    const path = sorted.map(loc => new window.AMap.LngLat(loc.lng, loc.lat));
-    try {
-      const polyline = new window.AMap.Polyline({
-        path,
-        strokeColor: '#ef4444',
-        strokeWeight: 3,
-        strokeStyle: 'dashed',
-        strokeDasharray: [10, 6],
-        strokeOpacity: 0.8,
-        lineJoin: 'round',
-        lineCap: 'round',
-        zIndex: 50,
-      });
-      polyline.setMap(mapRef.current);
-      polylinesRef.current.push(polyline);
-    } catch (e) {
-      console.warn('Polyline failed', e);
-    }
-  }, [locations]);
+    groupsToDraw.forEach((group) => {
+      const sorted = [...group.locations].sort((a, b) => a.order - b.order);
+      if (sorted.length < 2) return;
+
+      const path = sorted.map(loc => new window.AMap.LngLat(loc.lng, loc.lat));
+      const color = dayGroups.length > 0 ? getDayColor(group.day - 1) : '#ef4444';
+      try {
+        const polyline = new window.AMap.Polyline({
+          path,
+          strokeColor: color,
+          strokeWeight: isOverview ? 2 : 4,
+          strokeStyle: isOverview ? 'dashed' : 'solid',
+          strokeDasharray: isOverview ? [10, 6] : [0, 0],
+          strokeOpacity: isOverview ? 0.7 : 0.9,
+          lineJoin: 'round',
+          lineCap: 'round',
+          zIndex: 50,
+        });
+        polyline.setMap(mapRef.current);
+        polylinesRef.current.push(polyline);
+      } catch (e) {
+        console.warn('Polyline failed', e);
+      }
+    });
+  }, [visibleLocations, activeLayer, dayGroups]);
 
   // Render numbered step markers (only when zoomed in)
   const renderStepMarkers = useCallback(() => {
     if (!mapRef.current || !window.AMap) return;
     clearStepMarkers();
 
-    const sorted = [...locations].sort((a, b) => a.order - b.order);
+    const sorted = [...visibleLocations].sort((a, b) => a.order - b.order);
 
     sorted.forEach((loc) => {
       const isFirst = loc.order === 1;
@@ -334,15 +487,26 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
         stepMarkersRef.current.push(marker);
       } catch { }
     });
-  }, [clearStepMarkers, locations]);
+  }, [clearStepMarkers, visibleLocations]);
 
-  // Render polyline once map loads (always visible) — re-render when locations change
+  // Render polyline once map loads (always visible) — re-render when locations/layer change
   useEffect(() => {
     if (!mapRef.current || !window.AMap || !mapLoaded) return;
     if (selectedLocation) return;
     clearRoute();
     renderRoutePolyline();
-  }, [mapLoaded, selectedLocation, locations, renderRoutePolyline, clearRoute]);
+  }, [mapLoaded, selectedLocation, visibleLocations, activeLayer, renderRoutePolyline, clearRoute]);
+
+  // Fit map to locations when data first loads
+  const hasFittedRef = useRef(false);
+  useEffect(() => {
+    if (!mapRef.current || !mapLoaded || locations.length === 0) return;
+    if (hasFittedRef.current) return;
+    hasFittedRef.current = true;
+    setTimeout(() => {
+      try { mapRef.current?.setFitView(null, false, [60, 60, 60, 60]); } catch { }
+    }, 200);
+  }, [mapLoaded, locations]);
 
   // Show/hide step markers based on zoom level
   useEffect(() => {
@@ -354,100 +518,14 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     } else {
       clearStepMarkers();
     }
-  }, [zoomLevel, mapLoaded, selectedLocation, locations, renderStepMarkers, clearStepMarkers]);
-
-  // Export to AMap App
-  const exportToAMap = useCallback(() => {
-    const sorted = [...locations].sort((a, b) => a.order - b.order);
-    if (sorted.length === 0) return;
-    // AMap URI scheme: multi-destination driving
-    const start = sorted[0];
-    const end = sorted[sorted.length - 1];
-    const waypoints = sorted.slice(1, -1);
-
-    let url = `https://uri.amap.com/navigation?from=${start.lng},${start.lat},${encodeURIComponent(start.name)}&to=${end.lng},${end.lat},${encodeURIComponent(end.name)}`;
-    if (waypoints.length > 0) {
-      const viaStr = waypoints.map(w => `${w.lng},${w.lat},${encodeURIComponent(w.name)}`).join(';');
-      url += `&via=${viaStr}`;
-    }
-    url += '&mode=car&callnative=1';
-    window.open(url, '_blank');
-    toast.success('正在打开高德地图...');
-    setShowExportMenu(false);
-  }, [locations]);
-
-  // Export to Google Maps
-  const exportToGoogleMaps = useCallback(() => {
-    const sorted = [...locations].sort((a, b) => a.order - b.order);
-    if (sorted.length === 0) return;
-    const start = sorted[0];
-    const end = sorted[sorted.length - 1];
-    const waypoints = sorted.slice(1, -1);
-
-    let url = `https://www.google.com/maps/dir/?api=1&origin=${start.lat},${start.lng}&destination=${end.lat},${end.lng}`;
-    if (waypoints.length > 0) {
-      const waypointStr = waypoints.map(w => `${w.lat},${w.lng}`).join('|');
-      url += `&waypoints=${waypointStr}`;
-    }
-    url += '&travelmode=driving';
-    window.open(url, '_blank');
-    toast.success('正在打开 Google Maps...');
-    setShowExportMenu(false);
-  }, [locations]);
-
-  const exportMapImage = useCallback(async () => {
-    if (locations.length === 0) {
-      toast.error('暂无可导出的地点数据');
-      return;
-    }
-
-    try {
-      setIsExportingImage(true);
-      const { apiKey } = await resolveAMapConfig();
-      if (!apiKey) {
-        throw new Error('missing amap api key');
-      }
-
-      const sortedLocations = [...locations].sort((a, b) => a.order - b.order);
-      const staticMapUrl = buildStaticMapUrl(
-        sortedLocations,
-        apiKey,
-        getStaticMapSize(mapContainerRef.current),
-      );
-
-      try {
-        const response = await fetch(staticMapUrl);
-        if (!response.ok) {
-          throw new Error(`static map request failed: ${response.status}`);
-        }
-
-        const blob = await response.blob();
-        triggerBlobDownload(blob, `trip-map-${tripId}.png`);
-        toast.success(
-          sortedLocations.length > STATIC_MAP_MAX_MARKERS
-            ? '静态地图已下载，标记点过多时会自动抽样显示'
-            : '静态地图已开始下载',
-        );
-      } catch (downloadError) {
-        console.warn('[TripMapPage] 静态地图下载失败，改为打开图片地址', downloadError);
-        window.open(staticMapUrl, '_blank', 'noopener,noreferrer');
-        toast.success('已打开高德静态图，请手动保存图片');
-      }
-    } catch (error) {
-      console.error('[TripMapPage] 导出静态地图失败', error);
-      toast.error('静态地图导出失败，请确认已开通高德 Web 服务 Key');
-    } finally {
-      setIsExportingImage(false);
-      setShowExportMenu(false);
-    }
-  }, [locations, tripId]);
+  }, [zoomLevel, mapLoaded, selectedLocation, visibleLocations, activeLayer, renderStepMarkers, clearStepMarkers]);
 
   // Render cluster markers (zoomed out)
   const renderClusters = useCallback(() => {
     if (!mapRef.current || !window.AMap) return;
     clearMarkers();
 
-    buildClusters(locations).forEach(cluster => {
+    buildClusters(visibleLocations).forEach(cluster => {
       const el = document.createElement('div');
       el.style.cssText = 'display:flex;flex-direction:column;align-items:center;cursor:pointer;';
       el.innerHTML = `
@@ -476,7 +554,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
         console.warn('Cluster marker failed', e);
       }
     });
-  }, [clearMarkers, locations]);
+  }, [clearMarkers, visibleLocations]);
 
   // Render individual location markers (zoomed in)
   const renderLocationMarkers = useCallback(() => {
@@ -485,7 +563,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
 
     // Only show locations in the current viewport
     const bounds = mapRef.current.getBounds();
-    const visibleLocations = locations.filter(loc => {
+    const viewportLocations = visibleLocations.filter(loc => {
       if (!bounds) return true;
       try {
         const ne = bounds.getNorthEast();
@@ -495,7 +573,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
       } catch { return true; }
     });
 
-    visibleLocations.forEach(loc => {
+    viewportLocations.forEach(loc => {
       const el = document.createElement('div');
       el.style.cssText = 'display:flex;flex-direction:column;align-items:center;cursor:pointer;';
 
@@ -540,7 +618,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     });
 
     // Also add small pin markers
-    locations.forEach(loc => {
+    visibleLocations.forEach(loc => {
       const pinEl = document.createElement('div');
       pinEl.innerHTML = `
         <div style="width:12px;height:12px;background:#ef4444;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>
@@ -556,7 +634,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
         markersRef.current.push(pin);
       } catch { }
     });
-  }, [clearMarkers, locations]);
+  }, [clearMarkers, visibleLocations]);
 
   // Update markers based on zoom level
   useEffect(() => {
@@ -568,7 +646,15 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     } else {
       renderLocationMarkers();
     }
-  }, [zoomLevel, mapLoaded, selectedLocation, locations, renderClusters, renderLocationMarkers]);
+  }, [zoomLevel, mapLoaded, selectedLocation, visibleLocations, activeLayer, renderClusters, renderLocationMarkers]);
+
+  // Fit bounds when layer changes
+  useEffect(() => {
+    if (!mapRef.current || visibleLocations.length === 0) return;
+    setTimeout(() => {
+      try { mapRef.current?.setFitView(null, false, [60, 60, 60, 60]); } catch { }
+    }, 100);
+  }, [activeLayer]);
 
   // Open location detail with loading animation
   const openLocationDetail = useCallback((loc: LocationPoint) => {
@@ -585,8 +671,27 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     setDetailLoading(false);
   }, []);
 
+  // 单天行程自动切到该天
+  useEffect(() => {
+    if (itineraryDays.length === 1 && activeLayer === 'all') {
+      setActiveLayer(itineraryDays[0]);
+    }
+  }, [itineraryDays, activeLayer]);
+
   // --- Render ---
+  const showMapOverlay = !selectedLocation;
+  const showDayBar = showMapOverlay && itineraryDays.length > 0;
+
+  console.log('[TripMapPage] daybar check', {
+    mapLoaded,
+    selectedLocation: !!selectedLocation,
+    itineraryDays,
+    itineraryDaysLength: itineraryDays.length,
+    showDayBar,
+  });
+
   return (
+  <>
     <div className="fixed inset-0 z-[60] bg-gray-50 overflow-hidden">
       {/* Map Container */}
       <div
@@ -627,24 +732,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
         </div>
       )}
 
-      {/* Top Nav - Only when map is visible */}
-      {!selectedLocation && mapLoaded && (
-        <div className="absolute top-0 left-0 right-0 z-40 bg-gradient-to-b from-black/40 to-transparent">
-          <div className="px-4 pt-12 pb-3 flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="rounded-full bg-white/20 backdrop-blur-md hover:bg-white/40 text-white"
-              onClick={onBack}
-            >
-              <ChevronLeft className="w-6 h-6" />
-            </Button>
-            <div className="text-white font-semibold text-base drop-shadow">
-              {zoomLevel < ZOOM_THRESHOLD ? '城市概览' : '探索地点'}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Top Nav + Day Bar + Export + Legend — all rendered via portal below */}
 
       {/* Detail View Overlay */}
       <AnimatePresence>
@@ -889,113 +977,207 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
         )}
       </AnimatePresence>
 
-      {/* Export Buttons - floating on map */}
-      {!selectedLocation && mapLoaded && (
-        <div className="absolute bottom-8 right-4 z-40 flex flex-col items-end gap-2">
-          <AnimatePresence>
-            {showExportMenu && (
-              <motion.div
-                initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                transition={{ duration: 0.2 }}
-                className="flex flex-col gap-2 mb-2"
-              >
-                {/* Export to AMap */}
-                <button
-                  onClick={exportToAMap}
-                  className="flex items-center gap-2.5 bg-white rounded-xl px-4 py-3 shadow-lg border border-gray-100 hover:bg-blue-50 active:scale-95 transition-all"
-                >
-                  <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center flex-shrink-0">
-                    <MapIcon className="w-4 h-4 text-white" />
-                  </div>
-                  <div className="text-left">
-                    <div className="text-sm font-semibold text-gray-900">导出到高德地图</div>
-                    <div className="text-[11px] text-gray-400">在高德地图中打开路线</div>
-                  </div>
-                </button>
-
-                {/* Export to Google Maps */}
-                <button
-                  onClick={exportToGoogleMaps}
-                  className="flex items-center gap-2.5 bg-white rounded-xl px-4 py-3 shadow-lg border border-gray-100 hover:bg-green-50 active:scale-95 transition-all"
-                >
-                  <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
-                    <Navigation className="w-4 h-4 text-white" />
-                  </div>
-                  <div className="text-left">
-                    <div className="text-sm font-semibold text-gray-900">导出到谷歌地图</div>
-                    <div className="text-[11px] text-gray-400">在 Google Maps 中打开路线</div>
-                  </div>
-                </button>
-
-                <button
-                  onClick={exportMapImage}
-                  disabled={isExportingImage}
-                  className="flex items-center gap-2.5 bg-white rounded-xl px-4 py-3 shadow-lg border border-gray-100 hover:bg-amber-50 active:scale-95 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  <div className="w-8 h-8 rounded-full bg-amber-500 flex items-center justify-center flex-shrink-0">
-                    {isExportingImage ? <Loader2 className="w-4 h-4 text-white animate-spin" /> : <ImageIcon className="w-4 h-4 text-white" />}
-                  </div>
-                  <div className="text-left">
-                    <div className="text-sm font-semibold text-gray-900">保存静态地图</div>
-                    <div className="text-[11px] text-gray-400">通过高德静态图 API 导出 PNG 图片</div>
-                  </div>
-                </button>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Export toggle button */}
-          <button
-            onClick={() => setShowExportMenu(!showExportMenu)}
-            className={`w-14 h-14 rounded-full flex items-center justify-center shadow-lg border-2 border-white active:scale-95 transition-all ${showExportMenu ? 'bg-gray-700 rotate-45' : 'bg-gradient-to-br from-red-500 to-pink-500'
-              }`}
-          >
-            <Share2 className="w-6 h-6 text-white" />
-          </button>
-        </div>
-      )}
-
-      {/* Route Legend - floating on map */}
-      {!selectedLocation && mapLoaded && (
-        <div className="absolute bottom-8 left-4 z-40 bg-white/90 backdrop-blur-sm rounded-xl px-3 py-2.5 shadow-lg border border-gray-100">
-          <div className="text-xs font-semibold text-gray-700 mb-1.5">行程路线</div>
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center">
-                <span className="text-white text-[9px] font-bold">起</span>
-              </div>
-              <span className="text-[11px] text-gray-600">出发地</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-5 rounded-full bg-red-500 flex items-center justify-center">
-                <span className="text-white text-[9px] font-bold">2</span>
-              </div>
-              <span className="text-[11px] text-gray-600">途经点</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-5 rounded-full bg-purple-600 flex items-center justify-center">
-                <span className="text-white text-[9px] font-bold">终</span>
-              </div>
-              <span className="text-[11px] text-gray-600">终点</span>
-            </div>
-            <div className="flex items-center gap-2 mt-0.5">
-              <div className="w-5 flex items-center justify-center">
-                <div className="w-4 border-t-2 border-dashed border-red-400" />
-              </div>
-              <span className="text-[11px] text-gray-600">行程路线</span>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Export Scope Sheet */}
+      <AnimatePresence>
+        {showExportSheet && exportScopes.length > 0 && (
+          <ExportScopeSheet
+            scopes={exportScopes}
+            initialScopeIndex={initialScopeIndex}
+            onExport={handleExport}
+            onClose={() => setShowExportSheet(false)}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Hide Scrollbar Style */}
       <style dangerouslySetInnerHTML={{
         __html: `
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .scrollbar-none::-webkit-scrollbar { display: none; }
+        .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
       `}} />
     </div>
+
+    {/* ── Map HUD Overlay ── All floating UI portaled to document.body */}
+    {showMapOverlay && mapLoaded && createPortal(
+      <>
+        {/* Top Nav */}
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 2147483646,
+            background: 'linear-gradient(to bottom, rgba(0,0,0,0.4), transparent)',
+            pointerEvents: 'none',
+          }}
+        >
+          <div style={{ padding: '48px 16px 12px', display: 'flex', alignItems: 'center', gap: '12px', pointerEvents: 'auto' }}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="rounded-full bg-white/20 backdrop-blur-md hover:bg-white/40 text-white"
+              onClick={onBack}
+            >
+              <ChevronLeft className="w-6 h-6" />
+            </Button>
+            <div style={{ color: '#fff', fontWeight: 600, fontSize: '16px', textShadow: '0 1px 3px rgba(0,0,0,0.3)' }}>
+              {zoomLevel < ZOOM_THRESHOLD ? '城市概览' : '探索地点'}
+            </div>
+          </div>
+        </div>
+
+        {/* Day Layer Tab Bar */}
+        {showDayBar && (
+          <div
+            style={{
+              position: 'fixed',
+              top: '96px',
+              left: 0,
+              right: 0,
+              zIndex: 2147483647,
+              display: 'flex',
+              justifyContent: 'center',
+              padding: '0 12px',
+              pointerEvents: 'none',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                gap: '4px',
+                background: 'rgba(255,255,255,0.96)',
+                borderRadius: '9999px',
+                padding: '6px 8px',
+                boxShadow: '0 10px 30px rgba(0,0,0,0.18)',
+                maxWidth: 'calc(100vw - 24px)',
+                overflowX: 'auto',
+                pointerEvents: 'auto',
+                border: '1px solid rgba(0,0,0,0.08)',
+              }}
+            >
+              {showOverviewTab && (
+                <button
+                  onClick={() => setActiveLayer('all')}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '9999px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    whiteSpace: 'nowrap',
+                    border: 'none',
+                    cursor: 'pointer',
+                    background: activeLayer === 'all' ? '#1f2937' : 'transparent',
+                    color: activeLayer === 'all' ? '#fff' : '#4b5563',
+                  }}
+                >
+                  总览
+                </button>
+              )}
+
+              {itineraryDays.map((dayNumber) => {
+                const color = getDayColor(dayNumber - 1);
+                const active = activeLayer === dayNumber || (!showOverviewTab && activeLayer === 'all');
+                return (
+                  <button
+                    key={dayNumber}
+                    onClick={() => setActiveLayer(dayNumber)}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '9999px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      whiteSpace: 'nowrap',
+                      border: 'none',
+                      cursor: 'pointer',
+                      background: active ? color : 'transparent',
+                      color: active ? '#fff' : '#4b5563',
+                    }}
+                  >
+                    第{dayNumber}天
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Export Button */}
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '32px',
+            right: '16px',
+            zIndex: 2147483646,
+          }}
+        >
+          <button
+            onClick={() => setShowExportSheet(true)}
+            style={{
+              width: '56px',
+              height: '56px',
+              borderRadius: '50%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: '2px solid #fff',
+              cursor: 'pointer',
+              background: 'linear-gradient(135deg, #ef4444, #ec4899)',
+              boxShadow: '0 4px 14px rgba(239,68,68,0.4)',
+            }}
+          >
+            <Share2 className="w-6 h-6 text-white" />
+          </button>
+        </div>
+
+        {/* Route Legend */}
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '32px',
+            left: '16px',
+            zIndex: 2147483646,
+            background: 'rgba(255,255,255,0.92)',
+            backdropFilter: 'blur(8px)',
+            borderRadius: '12px',
+            padding: '10px 12px',
+            boxShadow: '0 4px 14px rgba(0,0,0,0.1)',
+            border: '1px solid rgba(0,0,0,0.06)',
+          }}
+        >
+          <div style={{ fontSize: '12px', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>行程路线</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span style={{ color: '#fff', fontSize: '9px', fontWeight: 700 }}>起</span>
+              </div>
+              <span style={{ fontSize: '11px', color: '#4b5563' }}>出发地</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span style={{ color: '#fff', fontSize: '9px', fontWeight: 700 }}>2</span>
+              </div>
+              <span style={{ fontSize: '11px', color: '#4b5563' }}>途经点</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: '#9333ea', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span style={{ color: '#fff', fontSize: '9px', fontWeight: 700 }}>终</span>
+              </div>
+              <span style={{ fontSize: '11px', color: '#4b5563' }}>终点</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+              <div style={{ width: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ width: '16px', borderTop: '2px dashed #f87171' }} />
+              </div>
+              <span style={{ fontSize: '11px', color: '#4b5563' }}>行程路线</span>
+            </div>
+          </div>
+        </div>
+      </>,
+      document.body,
+    )}
+  </>
   );
 }

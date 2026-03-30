@@ -16,12 +16,80 @@ export type TripUpdate = TablesUpdate<'trips'>;
 
 export type TripItinerary = Tables<'trip_itineraries'>;
 export type Activity = Tables<'activities'>;
+type TripMapLocationInsert = TablesInsert<'trip_map_locations'>;
 
 // 行程详情类型（包含嵌套的行程单和活动）
 export interface TripDetail extends Trip {
   trip_itineraries: (TripItinerary & {
     activities: Activity[];
   })[];
+}
+
+function extractTripCity(destination: string): string {
+  const parts = destination
+    .split(/·|,|，|\/|\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return parts[0] || destination;
+}
+
+function mapActivityToMapLocationType(activityType: string): TripMapLocationInsert['type'] | null {
+  switch (activityType) {
+    case 'meal':
+    case 'dining':
+    case 'restaurant':
+      return 'restaurant';
+    case 'attraction':
+    case 'sightseeing':
+      return 'attraction';
+    case 'rest':
+    case 'accommodation':
+    case 'leisure':
+    case 'hotel':
+      return 'hotel';
+    default:
+      return null;
+  }
+}
+
+function buildTripMapLocations(
+  tripId: string,
+  destination: string,
+  itineraries: Array<{
+    itinerary: Pick<TripItinerary, 'day_number'>;
+    activities: Array<Pick<Activity, 'name' | 'type' | 'address' | 'location_lat' | 'location_lng' | 'order_index'>>;
+  }>,
+): TripMapLocationInsert[] {
+  const city = extractTripCity(destination);
+
+  return itineraries
+    .flatMap(({ itinerary, activities }) =>
+      activities
+        .map((activity) => {
+          if (!Number.isFinite(activity.location_lat) || !Number.isFinite(activity.location_lng)) {
+            return null;
+          }
+
+          const locationType = mapActivityToMapLocationType(activity.type);
+          if (!locationType) {
+            return null;
+          }
+
+          return {
+            trip_id: tripId,
+            name: activity.name,
+            city,
+            district: null,
+            address: activity.address,
+            lat: activity.location_lat!,
+            lng: activity.location_lng!,
+            type: locationType,
+            order_index: itinerary.day_number * 100 + (activity.order_index ?? 0),
+          };
+        })
+        .filter((location): location is TripMapLocationInsert => Boolean(location)),
+    );
 }
 
 /**
@@ -211,6 +279,30 @@ export const tripService = {
         activities,
       };
     });
+
+    const mapLocationsPayload = buildTripMapLocations(
+      createdTrip.id,
+      createdTrip.destination,
+      itinerariesWithActivities.map((itinerary) => ({
+        itinerary,
+        activities: itinerary.activities,
+      })),
+    );
+
+    if (mapLocationsPayload.length > 0) {
+      const { error: mapLocationsError } = await supabase
+        .from('trip_map_locations')
+        .insert(mapLocationsPayload);
+
+      if (mapLocationsError) {
+        console.error('[tripService] 批量创建地图地点失败:', mapLocationsError.message);
+      } else {
+        console.log('[tripService] 地图地点创建成功:', {
+          tripId: createdTrip.id,
+          count: mapLocationsPayload.length,
+        });
+      }
+    }
 
     const tripDetail: TripDetail = {
       ...createdTrip,
