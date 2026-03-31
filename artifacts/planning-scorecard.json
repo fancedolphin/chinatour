@@ -1,0 +1,13 @@
+{
+  "sampleCount": 32,
+  "passingCases": 32,
+  "failingCases": 0,
+  "intentMatchRate": 1,
+  "coreAttractionsRecallAt8": 1,
+  "foodRecallAt5": 1,
+  "itineraryExecutableRate": 0.9688,
+  "constraintHitRate": 1,
+  "llmGeneratedRatio": 0,
+  "canGenerateFalseRate": 0.0313,
+  "failures": []
+}

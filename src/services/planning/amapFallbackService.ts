@@ -8,6 +8,7 @@ import type {
   SlotName,
   SlotResult,
 } from './contracts';
+import { haversineDistanceMeters, isDuplicate } from './entityNormalizer';
 
 const FAST_FOOD_PATTERN =
   /(麦当劳|肯德基|汉堡王|必胜客|星巴克|mcdonald|kfc|burger king|pizza hut|starbucks)/i;
@@ -20,33 +21,6 @@ type AmapPoi = {
   type?: string;
 };
 
-function normalizeName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[\s·•\-\(\)（）]/g, '')
-    .replace(/(景区|景点|博物馆|分店|店|餐厅|饭店|酒家)$/g, '');
-}
-
-function isSimilarName(a: string, b: string): boolean {
-  const left = normalizeName(a);
-  const right = normalizeName(b);
-  return left === right || left.includes(right) || right.includes(left);
-}
-
-function haversineDistanceKm(
-  a: { lat: number; lng: number },
-  b: { lat: number; lng: number },
-): number {
-  const toRad = (value: number) => (value * Math.PI) / 180;
-  const earthRadius = 6371;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const p =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
-  return earthRadius * 2 * Math.atan2(Math.sqrt(p), Math.sqrt(1 - p));
-}
-
 function parseLocation(location?: string): { lat: number; lng: number } | undefined {
   if (!location) return undefined;
   const [lngRaw, latRaw] = location.split(',');
@@ -57,9 +31,9 @@ function parseLocation(location?: string): { lat: number; lng: number } | undefi
 }
 
 function shouldMerge(left: PlaceCandidate, right: PlaceCandidate): boolean {
-  if (isSimilarName(left.name, right.name)) return true;
+  if (isDuplicate(left, right)) return true;
   if (left.location && right.location) {
-    return haversineDistanceKm(left.location, right.location) < 0.2;
+    return haversineDistanceMeters(left.location, right.location) < 200;
   }
   return false;
 }

@@ -54,20 +54,30 @@
             "recharts": "^2.15.2",
             "sonner": "^2.0.3",
             "tailwind-merge": "*",
-            "vaul": "^1.1.2"
+            "vaul": "^1.1.2",
+            "zod": "^3.25.76"
       },
       "devDependencies": {
             "@types/node": "^20.10.0",
             "@types/react": "^19.2.7",
             "@types/react-dom": "^19.2.3",
             "@vitejs/plugin-react-swc": "^3.10.2",
-            "vite": "6.3.5"
+            "tsx": "^4.20.6",
+            "vite": "6.3.5",
+            "vitest": "^4.1.2"
       },
       "scripts": {
             "dev": "vite",
             "build": "vite build",
+            "test": "vitest run",
+            "test:unit": "vitest run src/services/planning/planning.test.ts",
+            "test:e2e": "vitest run tests/e2e/*.test.ts",
+            "test:golden": "node --import tsx tests/golden/run.ts",
+            "test:planning": "vitest run src/services/planning/planning.test.ts tests/e2e/*.test.ts",
             "seed:trips": "node scripts/seed-mock-trips.mjs",
             "seed:trip-map": "node scripts/seed-trip-map-locations.mjs",
-            "seed:rag-mvp": "node scripts/seed-rag-mvp.mjs"
+            "seed:rag-mvp": "node scripts/seed-rag-mvp.mjs",
+            "kb:stale-check": "node --import tsx scripts/kb-stale-check.ts",
+            "kb:update": "node --import tsx scripts/kb-update.ts"
       }
 }

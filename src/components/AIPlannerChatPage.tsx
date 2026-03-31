@@ -1,20 +1,21 @@
-import { ChevronLeft, Sparkles, Send, Calendar, MapPin, Clock, DollarSign, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import { ChevronLeft, Sparkles, Send, Calendar, MapPin, Clock, DollarSign, ChevronDown, ChevronUp, Loader2, CloudRain } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
 import { Separator } from './ui/separator';
-import { RestaurantDetailCard } from './RestaurantDetailCard';
+import { RestaurantDetailCard, type RestaurantDetail } from './RestaurantDetailCard';
 import { TransportDetailCard } from './TransportDetailCard';
 import { AttractionDetailCard } from './AttractionDetailCard';
-import { getMockRestaurantData, getMockTransportData, getMockAttractionData } from './mock-data';
+import { getMockTransportData, getMockAttractionData } from './mock-data';
 import { useAuthContext } from '@/presentation/context/AuthContext';
+import { restaurantDetailService } from '@/services/restaurantDetailService';
 import { tripService } from '@/services/tripService';
 import { transformTripPlanWithEnhancement, type TripPlan as PersistedTripPlan } from '@/utils/tripDataTransformer';
 import { toast } from 'sonner';
 import { tripPlanningService } from '@/services/planning/tripPlanningService';
-import type { SourceType } from '@/services/planning/contracts';
+import type { PlanningIntent, SourceType, StructuredItinerary } from '@/services/planning/contracts';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -53,6 +54,7 @@ interface Activity {
     lng: number;
     address?: string;
   };
+  indoorOutdoor?: 'indoor' | 'outdoor' | 'both';
 }
 
 interface AIPlannerChatPageProps {
@@ -118,15 +120,17 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [currentPlan, setCurrentPlan] = useState<TripPlan | null>(null);
+  const [currentIntent, setCurrentIntent] = useState<PlanningIntent | null>(null);
   const [showPlanPreview, setShowPlanPreview] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [expandedDays, setExpandedDays] = useState<number[]>([1]);
   const [isSaving, setIsSaving] = useState(false);
+  const [replanningDay, setReplanningDay] = useState<number | null>(null);
   const [savedTripId, setSavedTripId] = useState<string | null>(null);
   const isMountedRef = useRef(true);
   
   // Detail card states
-  const [selectedRestaurant, setSelectedRestaurant] = useState<any>(null);
+  const [selectedRestaurant, setSelectedRestaurant] = useState<RestaurantDetail | null>(null);
   const [selectedTransport, setSelectedTransport] = useState<any>(null);
   const [selectedAttraction, setSelectedAttraction] = useState<any>(null);
 
@@ -144,6 +148,7 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
       if (isMountedRef.current) {
         setMessages(prev => [...prev, { role: 'assistant', content: result.text, timestamp: new Date() }]);
         setCurrentPlan(result.tripPlan as TripPlan);
+        setCurrentIntent(result.intent);
         setExpandedDays([1]);
       }
 
@@ -232,6 +237,58 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
     );
   };
 
+  const handleBadWeatherReplan = async (dayNumber: number) => {
+    if (!currentPlan || replanningDay !== null) return;
+
+    setReplanningDay(dayNumber);
+    try {
+      const previousDay = currentPlan.days.find(day => day.day === dayNumber);
+      const result = await tripPlanningService.replanDayForBadWeather({
+        day: dayNumber,
+        currentPlan: currentPlan as unknown as StructuredItinerary,
+        intent: currentIntent ?? undefined,
+      });
+      const nextDay = result.tripPlan.days.find(day => day.day === dayNumber);
+      const didChangeDay =
+        previousDay?.theme !== nextDay?.theme ||
+        JSON.stringify(previousDay?.meals ?? {}) !== JSON.stringify(nextDay?.meals ?? {}) ||
+        (previousDay?.activities ?? [])
+          .filter(activity => activity.type === 'attraction')
+          .map(activity => `${activity.time}:${activity.name}`)
+          .join('|') !==
+          (nextDay?.activities ?? [])
+            .filter(activity => activity.type === 'attraction')
+            .map(activity => `${activity.time}:${activity.name}`)
+            .join('|');
+
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: result.text,
+        timestamp: new Date(),
+      }]);
+      setCurrentPlan(result.tripPlan as TripPlan);
+      setCurrentIntent(result.intent);
+      if (didChangeDay) {
+        toast.success(`第 ${dayNumber} 天已切换为室内雨天方案`);
+      } else {
+        toast.info(`第 ${dayNumber} 天未找到更合适的室内替代点位，已保留原日程`);
+      }
+    } catch (err) {
+      console.error('[AIPlannerChatPage] 雨天重规划失败:', err);
+      if (isMountedRef.current) {
+        toast.error('雨天重规划失败，请稍后重试');
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setReplanningDay(null);
+      }
+    }
+  };
+
   // Handle click functions
   const handleActivityClick = (activity: Activity) => {
     if (activity.type === 'transport') {
@@ -243,9 +300,9 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
     }
   };
 
-  const handleMealClick = (mealInfo: string) => {
+  const handleMealClick = async (mealInfo: string) => {
     const restaurantName = mealInfo.split(' - ')[0];
-    const data = getMockRestaurantData(restaurantName);
+    const data = await restaurantDetailService.findByName(restaurantName, currentPlan?.destination);
     if (data) {
       setSelectedRestaurant(data);
     }
@@ -546,6 +603,21 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
                             </div>
                           </>
                         )}
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => handleBadWeatherReplan(day.day)}
+                          disabled={isTyping || replanningDay !== null}
+                        >
+                          {replanningDay === day.day ? (
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <CloudRain className="w-4 h-4 mr-2" />
+                          )}
+                          <span>{replanningDay === day.day ? '重新规划中...' : '今天下雨，换室内方案'}</span>
+                        </Button>
                       </div>
                     )}
                   </div>

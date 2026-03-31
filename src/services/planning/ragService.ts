@@ -1,10 +1,13 @@
 import { supabase } from '@/utils/supabase/client';
 import { generateEmbedding } from './embeddingService';
+import { isDuplicate } from './entityNormalizer';
 import type {
   BookingTip,
   PlaceCandidate,
-  PlanningIntent,
   RagRetrievalResult,
+  RagSlotMap,
+  PlanningIntent,
+  SignatureItem,
   SlotName,
   SlotResult,
 } from './contracts';
@@ -14,12 +17,15 @@ const MIN_SLOT_ITEMS = 2;
 type AttractionRpcRow = {
   id: string;
   name: string;
+  name_en?: string | null;
   description: string | null;
   location_lat: number | string | null;
   location_lng: number | string | null;
+  address?: string | null;
   ticket_price: string | null;
   recommended_duration: string | null;
   tags: string[] | null;
+  indoor_outdoor?: string | null;
   similarity: number | null;
 };
 
@@ -30,9 +36,40 @@ type RestaurantRpcRow = {
   description: string | null;
   location_lat: number | string | null;
   location_lng: number | string | null;
+  address?: string | null;
   price_range: string | null;
   specialties: string[] | null;
   similarity: number | null;
+};
+
+type AuxiliaryRpcRow = {
+  id: string;
+  name: string;
+  name_en?: string | null;
+  type?: string | null;
+  category?: string | null;
+  description?: string | null;
+  address?: string | null;
+  location_lat?: number | string | null;
+  location_lng?: number | string | null;
+  duration_minutes?: number | null;
+  duration_text?: string | null;
+  price_per_person?: string | null;
+  price_range?: string | null;
+  price?: string | null;
+  schedule?: string | null;
+  operating_hours?: string | null;
+  indoor_outdoor?: string | null;
+  booking_required?: boolean | null;
+  booking_method?: string | null;
+  take_home_item?: boolean | null;
+  month_start?: number | null;
+  month_end?: number | null;
+  tags?: string[] | null;
+  highlights?: string[] | null;
+  suitable_for?: string[] | null;
+  signature_items?: SignatureItem[] | null;
+  similarity?: number | null;
 };
 
 type DestinationRow = { id: string; name: string };
@@ -42,6 +79,54 @@ type TravelTipRow = {
   content: string | null;
   category: string | null;
   is_important: boolean | null;
+};
+
+type OptionalSlotName = Exclude<SlotName, 'core_attractions' | 'booking_constraints'> | 'food';
+
+const OPTIONAL_SLOT_QUERIES: Record<
+  OptionalSlotName,
+  {
+    rpc: string;
+    threshold: number;
+    limit: number;
+    buildQuery: (intent: PlanningIntent) => string;
+  }
+> = {
+  food: {
+    rpc: 'match_restaurants',
+    threshold: 0.55,
+    limit: 6,
+    buildQuery: (intent) =>
+      `${intent.destination} ${intent.cuisinePreference || ''} ${intent.rawQuery} food restaurant local cuisine`,
+  },
+  industrial_tourism: {
+    rpc: 'match_industrial_tourism',
+    threshold: 0.65,
+    limit: 4,
+    buildQuery: (intent) =>
+      `${intent.destination} 工业旅游 工厂 车间 制造 workshop factory craft souvenir`,
+  },
+  cultural_experiences: {
+    rpc: 'match_cultural_experiences',
+    threshold: 0.68,
+    limit: 4,
+    buildQuery: (intent) =>
+      `${intent.destination} 文化体验 traditional culture experience ${intent.interestTags.join(' ')}`,
+  },
+  events: {
+    rpc: 'match_events',
+    threshold: 0.65,
+    limit: 4,
+    buildQuery: (intent) =>
+      `${intent.destination} 节庆 活动 festival event celebration seasonal ${intent.travelMonth ?? ''}`,
+  },
+  markets: {
+    rpc: 'match_markets',
+    threshold: 0.68,
+    limit: 4,
+    buildQuery: (intent) =>
+      `${intent.destination} 夜市 市场 购物 night market shopping souvenir ${intent.interestTags.join(' ')}`,
+  },
 };
 
 function toNumber(value: string | number | null | undefined): number | undefined {
@@ -57,20 +142,46 @@ function toVectorLiteral(embedding: number[]): string {
   return `[${embedding.join(',')}]`;
 }
 
+function clampConfidence(value: number | null | undefined, fallback = 0.6): number {
+  return Math.max(0.3, Math.min(0.95, value ?? fallback));
+}
+
+function normalizeIndoorOutdoor(value: string | null | undefined) {
+  return value === 'indoor' || value === 'both' || value === 'outdoor' ? value : undefined;
+}
+
+function normalizeSignatureItems(value: SignatureItem[] | null | undefined): SignatureItem[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value
+    .filter((item) => item && typeof item.name === 'string' && item.name.trim())
+    .map((item) => ({
+      name: item.name,
+      nameEn: item.nameEn,
+      priceRmb: item.priceRmb ?? null,
+      bargainTip: item.bargainTip ?? null,
+      note: item.note ?? null,
+    }));
+}
+
 function normalizeAttraction(item: AttractionRpcRow): PlaceCandidate {
   const lat = toNumber(item.location_lat);
   const lng = toNumber(item.location_lng);
   return {
     id: item.id,
     name: item.name,
+    nameEn: item.name_en || undefined,
     description: item.description || '暂无描述',
     slot: 'core_attractions',
     source: 'rag',
-    confidence: Math.max(0.3, Math.min(0.95, item.similarity ?? 0.6)),
-    location: lat !== undefined && lng !== undefined ? { lat, lng } : undefined,
+    confidence: clampConfidence(item.similarity),
+    location:
+      lat !== undefined && lng !== undefined
+        ? { lat, lng, address: item.address || undefined }
+        : undefined,
     ticketPrice: item.ticket_price || undefined,
     recommendedDuration: item.recommended_duration || undefined,
     tags: item.tags || undefined,
+    indoorOutdoor: normalizeIndoorOutdoor(item.indoor_outdoor),
   };
 }
 
@@ -83,11 +194,71 @@ function normalizeRestaurant(item: RestaurantRpcRow): PlaceCandidate {
     description: item.description || '暂无描述',
     slot: 'food',
     source: 'rag',
-    confidence: Math.max(0.3, Math.min(0.95, item.similarity ?? 0.6)),
-    location: lat !== undefined && lng !== undefined ? { lat, lng } : undefined,
+    confidence: clampConfidence(item.similarity),
+    location:
+      lat !== undefined && lng !== undefined
+        ? { lat, lng, address: item.address || undefined }
+        : undefined,
     price: item.price_range || undefined,
     tags: item.specialties || undefined,
   };
+}
+
+function normalizeAuxiliaryCandidate(slot: SlotName, item: AuxiliaryRpcRow): PlaceCandidate {
+  const lat = toNumber(item.location_lat);
+  const lng = toNumber(item.location_lng);
+  const tags = [...(item.tags || []), ...(item.highlights || [])].filter(Boolean);
+  const reservationNotes =
+    item.booking_required === true
+      ? item.booking_method || '需预约'
+      : undefined;
+
+  return {
+    id: item.id,
+    name: item.name,
+    nameEn: item.name_en || undefined,
+    description: item.description || '暂无描述',
+    slot,
+    source: 'rag',
+    confidence: clampConfidence(item.similarity, 0.72),
+    location:
+      lat !== undefined && lng !== undefined
+        ? { lat, lng, address: item.address || undefined }
+        : undefined,
+    category: item.type || item.category || undefined,
+    price: item.price_per_person || item.price || item.price_range || undefined,
+    recommendedDuration:
+      item.duration_minutes != null
+        ? `${item.duration_minutes}分钟`
+        : item.duration_text || undefined,
+    reservationNotes,
+    indoorOutdoor:
+      slot === 'cultural_experiences'
+        ? normalizeIndoorOutdoor(item.indoor_outdoor) || 'indoor'
+        : normalizeIndoorOutdoor(item.indoor_outdoor),
+    monthStart: item.month_start || undefined,
+    monthEnd: item.month_end || undefined,
+    operatingHours: item.schedule || item.operating_hours || undefined,
+    highlights: item.highlights || undefined,
+    suitableFor: item.suitable_for || undefined,
+    tags: tags.length > 0 ? tags : undefined,
+    signatureItems: normalizeSignatureItems(item.signature_items),
+  };
+}
+
+function dedupePlaceCandidates(items: PlaceCandidate[]): PlaceCandidate[] {
+  return items.reduce<PlaceCandidate[]>((unique, item) => {
+    const index = unique.findIndex((existing) => isDuplicate(existing, item));
+    if (index === -1) {
+      unique.push(item);
+      return unique;
+    }
+
+    if (item.confidence > unique[index].confidence) {
+      unique[index] = item;
+    }
+    return unique;
+  }, []);
 }
 
 function satisfiesSlot(items: PlaceCandidate[]): boolean {
@@ -163,7 +334,7 @@ async function fallbackKeywordRetrieval(intent: PlanningIntent): Promise<{
 
   let attractionQuery = supabase
     .from('attractions')
-    .select('id, name, description, location_lat, location_lng, ticket_price, recommended_duration, tags')
+    .select('id, name, description, location_lat, location_lng, address, ticket_price, recommended_duration, tags, indoor_outdoor')
     .order('popularity_score', { ascending: false, nullsFirst: false })
     .limit(6);
   if (destinationIds.length > 0) {
@@ -172,7 +343,7 @@ async function fallbackKeywordRetrieval(intent: PlanningIntent): Promise<{
 
   let restaurantQuery = supabase
     .from('restaurants')
-    .select('id, name, description, location_lat, location_lng, price_range, specialties')
+    .select('id, name, description, location_lat, location_lng, address, price_range, specialties')
     .order('popularity_score', { ascending: false, nullsFirst: false })
     .limit(6);
   if (destinationIds.length > 0) {
@@ -184,15 +355,31 @@ async function fallbackKeywordRetrieval(intent: PlanningIntent): Promise<{
     restaurantQuery,
   ]);
 
-  const coreAttractions = ((attractions as AttractionRpcRow[] | null) || []).map((item) => ({
-    ...normalizeAttraction({ ...item, similarity: 0.62 }),
-  }));
+  const coreAttractions = ((attractions as AttractionRpcRow[] | null) || []).map((item) =>
+    normalizeAttraction({ ...item, similarity: 0.62 }),
+  );
 
-  const food = ((restaurants as RestaurantRpcRow[] | null) || []).map((item) => ({
-    ...normalizeRestaurant({ ...item, similarity: 0.62 }),
-  }));
+  const food = ((restaurants as RestaurantRpcRow[] | null) || []).map((item) =>
+    normalizeRestaurant({ ...item, similarity: 0.62 }),
+  );
 
   return { coreAttractions, food };
+}
+
+function shouldRetrieveSlot(intent: PlanningIntent, slot: Exclude<OptionalSlotName, 'food'>): boolean {
+  if (slot === 'industrial_tourism') {
+    return intent.includeIndustrial || intent.interestTags.includes('industrial');
+  }
+  if (slot === 'cultural_experiences') {
+    return intent.interestTags.includes('culture') || /茶道|书法|戏曲|文化/i.test(intent.rawQuery);
+  }
+  if (slot === 'events') {
+    return Boolean(intent.travelMonth) || /节庆|活动|festival|event/i.test(intent.rawQuery);
+  }
+  if (slot === 'markets') {
+    return intent.interestTags.includes('shopping') || /夜市|购物|market|shopping/i.test(intent.rawQuery);
+  }
+  return false;
 }
 
 class RagService {
@@ -211,13 +398,14 @@ class RagService {
     }
 
     const embeddingMs = performance.now() - embeddingStart;
-
     const ragStart = performance.now();
+
     let coreAttractions: PlaceCandidate[] = [];
     let food: PlaceCandidate[] = [];
+    let optionalSlots: RagSlotMap = {};
 
     if (queryEmbedding) {
-      const [attractionsResult, restaurantsResult] = await Promise.all([
+      const [attractionsResult, restaurantsResult, extraSlots] = await Promise.all([
         supabase.rpc('match_attractions', {
           query_embedding: queryEmbedding,
           match_threshold: 0.55,
@@ -230,33 +418,44 @@ class RagService {
           match_count: 6,
           destination_filter: intent.destination,
         }),
+        this.queryOptionalSlotsFromEmbedding(
+          intent,
+          queryEmbedding,
+          (['cultural_experiences', 'events', 'markets', 'industrial_tourism'] as const).filter((slot) =>
+            shouldRetrieveSlot(intent, slot),
+          ),
+        ),
       ]);
 
       if (attractionsResult.error) {
         console.warn('[ragService] match_attractions 失败:', attractionsResult.error.message);
       } else {
-        coreAttractions = ((attractionsResult.data as AttractionRpcRow[] | null) || []).map(
-          normalizeAttraction,
+        coreAttractions = dedupePlaceCandidates(
+          ((attractionsResult.data as AttractionRpcRow[] | null) || []).map(normalizeAttraction),
         );
       }
 
       if (restaurantsResult.error) {
         console.warn('[ragService] match_restaurants 失败:', restaurantsResult.error.message);
       } else {
-        food = ((restaurantsResult.data as RestaurantRpcRow[] | null) || []).map(normalizeRestaurant);
+        food = dedupePlaceCandidates(
+          ((restaurantsResult.data as RestaurantRpcRow[] | null) || []).map(normalizeRestaurant),
+        );
       }
+
+      optionalSlots = extraSlots;
     }
 
     if (coreAttractions.length === 0 || food.length === 0) {
       const fallbackResults = await fallbackKeywordRetrieval(intent);
-      if (coreAttractions.length === 0) coreAttractions = fallbackResults.coreAttractions;
-      if (food.length === 0) food = fallbackResults.food;
+      if (coreAttractions.length === 0) coreAttractions = dedupePlaceCandidates(fallbackResults.coreAttractions);
+      if (food.length === 0) food = dedupePlaceCandidates(fallbackResults.food);
     }
 
     const bookingTips = await fetchBookingTips(intent.destination);
     const ragMs = performance.now() - ragStart;
 
-    const slots: Record<SlotName, SlotResult> = {
+    const slots: RagSlotMap = {
       core_attractions: {
         items: coreAttractions,
         satisfied: satisfiesSlot(coreAttractions),
@@ -265,11 +464,24 @@ class RagService {
         items: food,
         satisfied: satisfiesSlot(food),
       },
+      ...optionalSlots,
     };
 
-    const unsatisfiedSlots = (Object.keys(slots) as SlotName[]).filter(
-      (slot) => !slots[slot].satisfied,
-    );
+    const unsatisfiedSlots: SlotName[] = [];
+    if (!slots.core_attractions?.satisfied) unsatisfiedSlots.push('core_attractions');
+    if (!slots.food?.satisfied) unsatisfiedSlots.push('food');
+    if (shouldRetrieveSlot(intent, 'industrial_tourism') && !slots.industrial_tourism?.satisfied) {
+      unsatisfiedSlots.push('industrial_tourism');
+    }
+    if (shouldRetrieveSlot(intent, 'cultural_experiences') && !slots.cultural_experiences?.satisfied) {
+      unsatisfiedSlots.push('cultural_experiences');
+    }
+    if (shouldRetrieveSlot(intent, 'events') && !slots.events?.satisfied) {
+      unsatisfiedSlots.push('events');
+    }
+    if (shouldRetrieveSlot(intent, 'markets') && !slots.markets?.satisfied) {
+      unsatisfiedSlots.push('markets');
+    }
 
     return {
       slots,
@@ -280,6 +492,100 @@ class RagService {
         rag_retrieve: ragMs,
       },
     };
+  }
+
+  async retrieveOptionalSlots(
+    intent: PlanningIntent,
+    requestedSlots: OptionalSlotName[],
+    requestId: string,
+  ): Promise<RagSlotMap> {
+    if (requestedSlots.length === 0) {
+      return {};
+    }
+
+    try {
+      const embedding = await generateEmbedding(
+        requestedSlots.map((slot) => OPTIONAL_SLOT_QUERIES[slot].buildQuery(intent)).join(' '),
+      );
+      return this.queryOptionalSlotsFromEmbedding(intent, toVectorLiteral(embedding), requestedSlots);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[ragService][${requestId}] optional slot embedding 失败:`, message);
+      return {};
+    }
+  }
+
+  async fetchBookingTipsForDestination(destination: string): Promise<BookingTip[]> {
+    return fetchBookingTips(destination);
+  }
+
+  async retrieveIndoorCandidates(intent: PlanningIntent, requestId: string): Promise<PlaceCandidate[]> {
+    const embedding = await generateEmbedding(
+      `${intent.destination} ${intent.rawQuery} indoor museum gallery bad weather rain shelter`,
+    );
+    const queryEmbedding = toVectorLiteral(embedding);
+
+    const indoorResult = await supabase.rpc('match_indoor_attractions', {
+      query_embedding: queryEmbedding,
+      match_threshold: 0.5,
+      match_count: 8,
+      destination_filter: intent.destination,
+    });
+
+    if (indoorResult.error) {
+      console.warn(`[ragService][${requestId}] match_indoor_attractions 失败:`, indoorResult.error.message);
+      const fallbackResults = await fallbackKeywordRetrieval(intent);
+      return fallbackResults.coreAttractions.filter((item) =>
+        ['indoor', 'both'].includes(item.indoorOutdoor ?? 'outdoor'),
+      );
+    }
+
+    return ((indoorResult.data as AttractionRpcRow[] | null) || []).map(normalizeAttraction);
+  }
+
+  private async queryOptionalSlotsFromEmbedding(
+    intent: PlanningIntent,
+    queryEmbedding: string,
+    requestedSlots: OptionalSlotName[],
+  ): Promise<RagSlotMap> {
+    const uniqueSlots = Array.from(new Set(requestedSlots));
+    const slotEntries = await Promise.all(
+      uniqueSlots.map(async (slot) => {
+        const config = OPTIONAL_SLOT_QUERIES[slot];
+        const params: Record<string, string | number | null> = {
+          query_embedding: queryEmbedding,
+          match_threshold: config.threshold,
+          match_count: config.limit,
+          destination_filter: intent.destination,
+        };
+        if (slot === 'events') {
+          params.month_filter = intent.travelMonth ?? null;
+        }
+
+        const result = await supabase.rpc(config.rpc, params);
+        if (result.error) {
+          console.warn(`[ragService] ${config.rpc} 失败:`, result.error.message);
+          return [slot, { items: [], satisfied: false } satisfies SlotResult] as const;
+        }
+
+        if (slot === 'food') {
+          const items = dedupePlaceCandidates(
+            ((result.data as RestaurantRpcRow[] | null) || []).map(normalizeRestaurant),
+          );
+          return [slot, { items, satisfied: satisfiesSlot(items) } satisfies SlotResult] as const;
+        }
+
+        const normalizedSlot = slot === 'food' ? 'food' : slot;
+        const items = dedupePlaceCandidates(
+          ((result.data as AuxiliaryRpcRow[] | null) || []).map((row) =>
+            normalizeAuxiliaryCandidate(normalizedSlot as SlotName, row),
+          ),
+        );
+        return [slot, { items, satisfied: items.length > 0 } satisfies SlotResult] as const;
+      }),
+    );
+
+    return Object.fromEntries(slotEntries) as RagSlotMap;
   }
 }
 

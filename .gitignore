@@ -32,3 +32,5 @@ dist-ssr
 # Build output
 build
 .cache
+__pycache__/
+*.pyc

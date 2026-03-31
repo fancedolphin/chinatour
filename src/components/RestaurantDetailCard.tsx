@@ -4,15 +4,15 @@ import { ScrollArea } from './ui/scroll-area';
 import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
 
-interface DishItem {
+export interface DishItem {
   name: string;
   nameEn: string;
   description: string;
-  image: string;
+  image?: string;
   allergens: string[];
 }
 
-interface RestaurantDetail {
+export interface RestaurantDetail {
   name: string;
   nameEn: string;
   address: string;
@@ -20,7 +20,7 @@ interface RestaurantDetail {
   cuisine: string;
   priceRange: string;
   signature: DishItem[];
-  menuImage: string;
+  menuImage?: string;
 }
 
 interface RestaurantDetailCardProps {
@@ -84,52 +84,66 @@ export function RestaurantDetailCard({ restaurant, onClose }: RestaurantDetailCa
                 <span>招牌菜推荐</span>
               </h3>
               <div className="space-y-4">
-                {restaurant.signature.map((dish, index) => (
-                  <div key={index} className="bg-gray-50 rounded-xl p-4">
-                    <div className="flex gap-4">
-                      <img
-                        src={dish.image}
-                        alt={dish.name}
-                        className="w-24 h-24 object-cover rounded-lg shrink-0"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2 mb-1">
-                          <div>
-                            <h4 className="text-sm text-gray-900">{dish.name}</h4>
-                            <p className="text-xs text-gray-500">{dish.nameEn}</p>
-                          </div>
-                        </div>
-                        <p className="text-xs text-gray-600 mt-2">{dish.description}</p>
-                        
-                        {/* Allergens Warning */}
-                        {dish.allergens.length > 0 && (
-                          <div className="mt-3 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                            <div className="flex-1">
-                              <p className="text-xs text-amber-900 mb-1">过敏源警示</p>
-                              <div className="flex flex-wrap gap-1">
-                                {dish.allergens.map((allergen, i) => (
-                                  <span
-                                    key={i}
-                                    className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded"
-                                  >
-                                    {allergen}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
+                {restaurant.signature.length === 0 ? (
+                  <div className="bg-gray-50 rounded-xl p-4 text-sm text-gray-500">
+                    暂无已清洗的招牌菜数据。
+                  </div>
+                ) : (
+                  restaurant.signature.map((dish, index) => (
+                    <div key={index} className="bg-gray-50 rounded-xl p-4">
+                      <div className="flex gap-4">
+                        {dish.image ? (
+                          <img
+                            src={dish.image}
+                            alt={dish.name}
+                            className="w-24 h-24 object-cover rounded-lg shrink-0"
+                          />
+                        ) : (
+                          <div className="w-24 h-24 rounded-lg shrink-0 bg-white border border-gray-200 flex items-center justify-center text-xs text-gray-400">
+                            暂无图片
                           </div>
                         )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-2 mb-1">
+                            <div>
+                              <h4 className="text-sm text-gray-900">{dish.name}</h4>
+                              <p className="text-xs text-gray-500">{dish.nameEn}</p>
+                            </div>
+                          </div>
+                          {dish.description && (
+                            <p className="text-xs text-gray-600 mt-2">{dish.description}</p>
+                          )}
+
+                          {dish.allergens.length > 0 && (
+                            <div className="mt-3 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                              <div className="flex-1">
+                                <p className="text-xs text-amber-900 mb-1">过敏源警示</p>
+                                <div className="flex flex-wrap gap-1">
+                                  {dish.allergens.map((allergen, i) => (
+                                    <span
+                                      key={i}
+                                      className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded"
+                                    >
+                                      {allergen}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
 
             <Separator />
 
             {/* Menu Section */}
+            {restaurant.menuImage && (
             <div>
               <h3 className="text-gray-900 mb-4 flex items-center gap-2">
                 <Languages className="w-5 h-5 text-red-500" />
@@ -147,6 +161,7 @@ export function RestaurantDetailCard({ restaurant, onClose }: RestaurantDetailCa
                 </p>
               </div>
             </div>
+            )}
 
             {/* Tips */}
             <div className="bg-blue-50 rounded-xl p-4">

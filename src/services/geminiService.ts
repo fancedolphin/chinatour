@@ -3,10 +3,8 @@
  * 封装 Google Generative AI 对话，用于旅行行程规划
  */
 
-import { GoogleGenerativeAI, type Content } from '@google/generative-ai';
-
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string;
-const MODEL = 'gemini-2.5-flash';
+import type { Content } from '@google/generative-ai';
+import { narrativeModel } from './llm/llmConfig';
 
 const SYSTEM_PROMPT = `你是专业的AI旅行规划助手，帮助用户制定详细的旅行行程。
 
@@ -51,8 +49,6 @@ const SYSTEM_PROMPT = `你是专业的AI旅行规划助手，帮助用户制定�
 - transport：交通/转移
 - rest：休息/住宿/自由活动`;
 
-// ============ 类型定义 ============
-
 export type ChatHistory = Content[];
 
 export interface TripPlanData {
@@ -82,8 +78,6 @@ export interface GeminiResponse {
   tripPlan?: TripPlanData;
 }
 
-// ============ 解析工具 ============
-
 function parseResponse(raw: string): GeminiResponse {
   const jsonMatch = raw.match(/```json\s*([\s\S]*?)```/);
   let tripPlan: TripPlanData | undefined;
@@ -103,23 +97,11 @@ function parseResponse(raw: string): GeminiResponse {
   return { text, tripPlan };
 }
 
-// ============ 核心发送函数 ============
-
 export async function sendGeminiMessage(
   history: ChatHistory,
   userMessage: string,
 ): Promise<{ response: GeminiResponse; updatedHistory: ChatHistory }> {
-  if (!API_KEY) {
-    throw new Error('VITE_GEMINI_API_KEY 未配置');
-  }
-
-  const genAI = new GoogleGenerativeAI(API_KEY);
-  const model = genAI.getGenerativeModel({
-    model: MODEL,
-    systemInstruction: SYSTEM_PROMPT,
-  });
-
-  const chat = model.startChat({ history });
+  const chat = narrativeModel.startChat(SYSTEM_PROMPT, history);
   const result = await chat.sendMessage(userMessage);
   const rawText = result.response.text();
 

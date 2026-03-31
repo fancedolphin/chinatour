@@ -7,9 +7,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Card } from './ui/card';
 import { ShareTripModal } from './ShareTripModal';
 import { AttractionDetailCard } from './AttractionDetailCard';
-import { RestaurantDetailCard } from './RestaurantDetailCard';
+import { RestaurantDetailCard, type RestaurantDetail } from './RestaurantDetailCard';
 import { TransportDetailCard } from './TransportDetailCard';
 import { toast } from 'sonner@2.0.3';
+import { restaurantDetailService } from '@/services/restaurantDetailService';
 import { supabase } from '@/utils/supabase/client';
 import { tripService, type TripDetail } from '@/services/tripService';
 import { downloadTripPDF } from '@/services/exportService';
@@ -70,7 +71,7 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
   const [currentView, setCurrentView] = useState<'itinerary' | 'budget'>('itinerary');
   const [showShareModal, setShowShareModal] = useState(false);
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
-  const [restaurantDetail, setRestaurantDetail] = useState<any>(null);
+  const [restaurantDetail, setRestaurantDetail] = useState<RestaurantDetail | null>(null);
   const [attractionDetail, setAttractionDetail] = useState<any>(null);
   const [transportDetail, setTransportDetail] = useState<any>(null);
   const [enhancedActivities, setEnhancedActivities] = useState<Record<string, EnhancedActivityDetail>>({});
@@ -715,71 +716,33 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
     const loadDetail = async () => {
       if (selectedActivity.type === 'meal') {
         if (selectedActivity.restaurantId) {
-          const { data, error } = await supabase
-            .from('restaurants')
-            .select('*, restaurant_dishes(*)')
-            .eq('id', selectedActivity.restaurantId)
-            .maybeSingle();
-
-          if (!error && data) {
-            const hours =
-              (typeof data.opening_hours === 'object' &&
-                data.opening_hours !== null &&
-                'general' in data.opening_hours &&
-                (data.opening_hours as any).general) ||
-              (typeof data.opening_hours === 'string' ? data.opening_hours : null) ||
-              '营业时间未提供';
-            const dishes = Array.isArray((data as any).restaurant_dishes)
-              ? (data as any).restaurant_dishes
-              : [];
-            setRestaurantDetail({
-              name: data.name,
-              nameEn: data.name_en || data.name,
-              address: data.address || selectedActivity.address || '地址未提供',
-              hours,
-              cuisine: data.cuisine_type || '精选美食',
-              priceRange: data.price_range || selectedActivity.price || '¥100-200',
-              signature: dishes
-                .sort((a: any, b: any) => (a.order_index || 0) - (b.order_index || 0))
-                .map((dish: any) => ({
-                  name: dish.name,
-                  nameEn: dish.name_en || dish.name,
-                  description: dish.description || '',
-                  image: dish.image_url || selectedActivity.image,
-                  allergens: dish.allergens || [],
-                })),
-              menuImage:
-                data.menu_image_url ||
-                selectedActivity.image ||
-                'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600',
-            });
+          const detail = await restaurantDetailService.findById(selectedActivity.restaurantId);
+          if (detail) {
+            setRestaurantDetail(detail);
             return;
           }
         }
 
-        // Fallback to selected activity
+        const detailByName = await restaurantDetailService.findByName(
+          selectedActivity.name,
+          dbTripData?.destination,
+        );
+        if (detailByName) {
+          setRestaurantDetail(detailByName);
+          return;
+        }
+
         setRestaurantDetail({
           name: selectedActivity.name,
           nameEn: selectedActivity.name,
           address: selectedActivity.address || '地址未提供',
-          hours: '11:00-22:00',
+          hours: '营业时间未提供',
           cuisine: '精选美食',
-          priceRange: selectedActivity.price || '¥100-200',
-          signature: [
-            {
-              name: '招牌菜',
-              nameEn: 'Signature Dish',
-              description: selectedActivity.description || '餐厅特色美食',
-              image:
-                selectedActivity.image ||
-                'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400',
-              allergens: [],
-            },
-          ],
-          menuImage:
-            selectedActivity.image ||
-            'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600',
+          priceRange: selectedActivity.price || '价格未提供',
+          signature: [],
+          menuImage: selectedActivity.image,
         });
+        return;
       }
 
       if (selectedActivity.type === 'attraction') {

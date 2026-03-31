@@ -30,12 +30,30 @@ function getAttractions(activities: PlannedActivity[]): PlannedActivity[] {
 
 function overloadThreshold(intent: PlanningIntent): number {
   if (intent.travelStyle === 'relaxed') return 2;
-  if (intent.travelStyle === 'aggressive') return 4;
+  if (intent.travelStyle === 'packed') return 4;
   return 3;
 }
 
 function hasBookingHint(activities: PlannedActivity[]): boolean {
   return activities.some((activity) => /预约|预订|门票|购票|实名/.test(activity.description));
+}
+
+function parseHour(value: string): number | null {
+  const match = value.match(/(\d{1,2})/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  return Number.isFinite(hour) ? hour : null;
+}
+
+function shouldWarnTimeOfDay(activity: PlannedActivity): boolean {
+  const hour = parseHour(activity.time);
+  if (hour === null) return false;
+
+  if (/鸣沙山|灯会|夜景/.test(activity.name) && hour < 15) {
+    return true;
+  }
+
+  return false;
 }
 
 class ItineraryValidator {
@@ -82,6 +100,18 @@ class ItineraryValidator {
           severity: 'warning',
           message: '存在预约/购票约束，但当日活动描述未体现预约提示。',
         });
+      }
+
+      for (const activity of attractions) {
+        if (shouldWarnTimeOfDay(activity)) {
+          warnings.push({
+            rule: 'time_of_day',
+            day: day.day,
+            severity: 'warning',
+            message: `${activity.name} 更适合下午或傍晚安排，当前时段可能体验欠佳。`,
+          });
+          break;
+        }
       }
     });
 
