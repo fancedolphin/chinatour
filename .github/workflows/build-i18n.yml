@@ -1,0 +1,42 @@
+name: build-i18n
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        locale: [zh, en]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: Build ${{ matrix.locale }} site
+        run: npm run build:${{ matrix.locale }}
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_AMAP_API_KEY: ${{ secrets.VITE_AMAP_API_KEY }}
+          VITE_AMAP_SECURITY_CODE: ${{ secrets.VITE_AMAP_SECURITY_CODE }}
+      - name: Verify build artifacts
+        run: |
+          test -f dist/${{ matrix.locale }}/index.html
+          test -f dist/${{ matrix.locale }}/_redirects
+          test -f dist/${{ matrix.locale }}/_headers
+          grep -q 'lang="${{ matrix.locale }}"' dist/${{ matrix.locale }}/index.html
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dist-${{ matrix.locale }}
+          path: dist/${{ matrix.locale }}
+          retention-days: 7

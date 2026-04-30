@@ -4,21 +4,18 @@
  */
 
 import { useState } from 'react';
-import { 
-  ChevronLeft, 
-  User, 
-  Mail, 
-  Edit2, 
-  Moon, 
-  Sun, 
-  LogOut, 
+import {
+  ChevronLeft,
+  User,
+  Mail,
+  Edit2,
+  Moon,
+  Sun,
+  LogOut,
   ChevronRight,
   Camera,
   Save,
   X,
-  Lock,
-  Eye,
-  EyeOff
 } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { Button } from './ui/button';
@@ -26,7 +23,7 @@ import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { Label } from './ui/label';
 import { Switch } from './ui/switch';
-import { 
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -38,7 +35,7 @@ import {
 } from './ui/alert-dialog';
 import { useAuthContext } from '../presentation/context/AuthContext';
 import { useTheme } from '../presentation/context/ThemeContext';
-import { useLanguage } from '../presentation/context/LanguageContext';
+import { useT } from '@/i18n/useT';
 import { toast } from 'sonner@2.0.3';
 
 interface SettingsPageProps {
@@ -46,47 +43,25 @@ interface SettingsPageProps {
 }
 
 export function SettingsPage({ onBack }: SettingsPageProps) {
-  const { currentUser, logout, updateProfile, changePassword } = useAuthContext();
+  const { currentUser, logout, updateProfile } = useAuthContext();
   const { theme, toggleTheme } = useTheme();
-  const { t } = useLanguage();
-  
-  // 编辑模式
+  const { t, locale, setLocale } = useT();
+
   const [isEditMode, setIsEditMode] = useState(false);
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
-  const [showChangePasswordDialog, setShowChangePasswordDialog] = useState(false);
-  
-  // 表单数据
+
   const [formData, setFormData] = useState({
     displayName: currentUser?.displayName || '',
     email: currentUser?.email || '',
     bio: currentUser?.bio || '',
     avatar: currentUser?.avatar || '',
   });
-  
-  // 密码表单数据
-  const [passwordData, setPasswordData] = useState({
-    currentPassword: '',
-    newPassword: '',
-    confirmPassword: '',
-  });
-  
-  // 密码可见性
-  const [showPasswords, setShowPasswords] = useState({
-    current: false,
-    new: false,
-    confirm: false,
-  });
-  
-  // 保存状态
-  const [isSaving, setIsSaving] = useState(false);
-  const [isChangingPassword, setIsChangingPassword] = useState(false);
 
-  /**
-   * 处理表单提交
-   */
+  const [isSaving, setIsSaving] = useState(false);
+
   const handleSave = async () => {
     if (!currentUser) return;
-    
+
     setIsSaving(true);
     try {
       const result = await updateProfile({
@@ -95,23 +70,20 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
         bio: formData.bio,
         avatar: formData.avatar,
       });
-      
+
       if (result.success) {
-        toast.success('个人信息已更新');
+        toast.success(t('settings.profileUpdated'));
         setIsEditMode(false);
       } else {
-        toast.error(result.error || '更新失败');
+        toast.error(result.error || t('settings.profileUpdateFailed'));
       }
-    } catch (error) {
-      toast.error('保存时发生错误');
+    } catch {
+      toast.error(t('settings.saveError'));
     } finally {
       setIsSaving(false);
     }
   };
 
-  /**
-   * 取消编辑
-   */
   const handleCancel = () => {
     setFormData({
       displayName: currentUser?.displayName || '',
@@ -122,21 +94,18 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
     setIsEditMode(false);
   };
 
-  /**
-   * 处理注销
-   */
   const handleLogout = () => {
     logout();
-    toast.success('已退出登录');
+    toast.success(t('settings.logoutSuccess'));
     onBack();
   };
 
-  /**
-   * 处理头像上传
-   */
   const handleAvatarUpload = () => {
-    toast.info('头像上传功能开发中');
-    // 实际应用中这里会打开文件选择器
+    toast.info(t('settings.avatarUploadInProgress'));
+  };
+
+  const toggleLocale = () => {
+    setLocale(locale === 'en' ? 'zh' : 'en');
   };
 
   return (
@@ -151,19 +120,14 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
             >
               <ChevronLeft className="w-5 h-5 text-gray-700 dark:text-gray-300" />
             </button>
-            <h1 className="text-gray-900 dark:text-white">设置</h1>
+            <h1 className="text-gray-900 dark:text-white">{t('settings.title')}</h1>
           </div>
-          
+
           {isEditMode && (
             <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleCancel}
-                disabled={isSaving}
-              >
+              <Button variant="outline" size="sm" onClick={handleCancel} disabled={isSaving}>
                 <X className="w-4 h-4 mr-1" />
-                取消
+                {t('settings.cancel')}
               </Button>
               <Button
                 size="sm"
@@ -172,7 +136,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
                 disabled={isSaving}
               >
                 <Save className="w-4 h-4 mr-1" />
-                {isSaving ? '保存中...' : '保存'}
+                {isSaving ? t('settings.saving') : t('settings.save')}
               </Button>
             </div>
           )}
@@ -183,15 +147,11 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
         {/* 账号信息卡片 */}
         <div className="bg-white dark:bg-gray-800 rounded-xl p-6">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-gray-900 dark:text-white">账号信息</h2>
+            <h2 className="text-gray-900 dark:text-white">{t('settings.accountSection')}</h2>
             {!isEditMode && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setIsEditMode(true)}
-              >
+              <Button variant="outline" size="sm" onClick={() => setIsEditMode(true)}>
                 <Edit2 className="w-4 h-4 mr-1" />
-                编辑
+                {t('settings.edit')}
               </Button>
             )}
           </div>
@@ -218,7 +178,9 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
           <div className="space-y-4">
             {/* 用户名（只读） */}
             <div>
-              <Label className="text-sm text-gray-600 dark:text-gray-400 mb-2">用户名</Label>
+              <Label className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                {t('settings.username')}
+              </Label>
               <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
                 <User className="w-4 h-4 text-gray-400" />
                 <span className="text-gray-700 dark:text-gray-300">{currentUser?.username}</span>
@@ -228,14 +190,14 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
             {/* 昵称 */}
             <div>
               <Label htmlFor="displayName" className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                昵称
+                {t('settings.displayName')}
               </Label>
               {isEditMode ? (
                 <Input
                   id="displayName"
                   value={formData.displayName}
                   onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
-                  placeholder="输入你的昵称"
+                  placeholder={t('settings.displayNamePlaceholder')}
                   className="h-12"
                 />
               ) : (
@@ -248,7 +210,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
             {/* 邮箱 */}
             <div>
               <Label htmlFor="email" className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                邮箱
+                {t('settings.email')}
               </Label>
               {isEditMode ? (
                 <div className="relative">
@@ -258,7 +220,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
                     type="email"
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    placeholder="输入邮箱地址"
+                    placeholder={t('settings.emailPlaceholder')}
                     className="pl-10 h-12"
                   />
                 </div>
@@ -273,20 +235,20 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
             {/* 个人简介 */}
             <div>
               <Label htmlFor="bio" className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                个人简介
+                {t('settings.bio')}
               </Label>
               {isEditMode ? (
                 <Textarea
                   id="bio"
                   value={formData.bio}
                   onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
-                  placeholder="介绍一下自己吧"
+                  placeholder={t('settings.bioPlaceholder')}
                   rows={4}
                   className="resize-none"
                 />
               ) : (
                 <div className="px-4 py-3 bg-gray-50 dark:bg-gray-700 rounded-lg text-gray-700 dark:text-gray-300 min-h-[100px]">
-                  {formData.bio || '暂无简介'}
+                  {formData.bio || t('settings.noBio')}
                 </div>
               )}
             </div>
@@ -295,8 +257,8 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
 
         {/* 偏好设置卡片 */}
         <div className="bg-white dark:bg-gray-800 rounded-xl p-6">
-          <h2 className="text-gray-900 dark:text-white mb-4">偏好设置</h2>
-          
+          <h2 className="text-gray-900 dark:text-white mb-4">{t('settings.preferenceSection')}</h2>
+
           <div className="space-y-4">
             {/* 主题切换 */}
             <div className="flex items-center justify-between py-3">
@@ -309,39 +271,43 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
                   )}
                 </div>
                 <div>
-                  <p className="text-gray-900 dark:text-white">深色模式</p>
+                  <p className="text-gray-900 dark:text-white">{t('settings.darkMode')}</p>
                   <p className="text-xs text-gray-500 dark:text-gray-400">
-                    {theme === 'dark' ? '当前为深色主题' : '当前为浅色主题'}
+                    {theme === 'dark' ? t('settings.darkOn') : t('settings.darkOff')}
                   </p>
                 </div>
               </div>
-              <Switch
-                checked={theme === 'dark'}
-                onCheckedChange={toggleTheme}
-              />
+              <Switch checked={theme === 'dark'} onCheckedChange={toggleTheme} />
             </div>
 
-            {/* 语言设置（暂时显示，不可编辑） */}
-            <div className="flex items-center justify-between py-3 border-t border-gray-100 dark:border-gray-700">
+            {/* 语言切换 — 点击切换 zh/en */}
+            <button
+              type="button"
+              onClick={toggleLocale}
+              className="w-full flex items-center justify-between py-3 border-t border-gray-100 dark:border-gray-700"
+            >
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-xl flex items-center justify-center">
-                  <span className="text-white">中</span>
+                  <span className="text-white text-sm font-semibold">
+                    {locale === 'en' ? 'EN' : '中'}
+                  </span>
                 </div>
-                <div>
-                  <p className="text-gray-900 dark:text-white">语言</p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">简体中文</p>
+                <div className="text-left">
+                  <p className="text-gray-900 dark:text-white">{t('settings.language')}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {locale === 'en' ? t('settings.languageEn') : t('settings.languageZh')}
+                  </p>
                 </div>
               </div>
               <ChevronRight className="w-5 h-5 text-gray-400" />
-            </div>
+            </button>
           </div>
         </div>
 
         {/* 账号管理卡片 */}
         <div className="bg-white dark:bg-gray-800 rounded-xl p-6">
-          <h2 className="text-gray-900 dark:text-white mb-4">账号管理</h2>
-          
-          {/* 注销账号 */}
+          <h2 className="text-gray-900 dark:text-white mb-4">{t('settings.accountManageSection')}</h2>
+
           <button
             onClick={() => setShowLogoutDialog(true)}
             className="w-full flex items-center justify-between py-4 px-4 rounded-xl hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors group"
@@ -351,8 +317,8 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
                 <LogOut className="w-5 h-5 text-red-600 dark:text-red-400" />
               </div>
               <div className="text-left">
-                <p className="text-red-600 dark:text-red-400">退出登录</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">退出当前账号</p>
+                <p className="text-red-600 dark:text-red-400">{t('settings.logout')}</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{t('settings.logoutSubtitle')}</p>
               </div>
             </div>
             <ChevronRight className="w-5 h-5 text-red-400" />
@@ -361,8 +327,8 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
 
         {/* 版本信息 */}
         <div className="text-center py-6">
-          <p className="text-xs text-gray-400">智能旅行规划 v1.0.0</p>
-          <p className="text-xs text-gray-400 mt-1">© 2025 Smart Travel Planner</p>
+          <p className="text-xs text-gray-400">{t('settings.version')}</p>
+          <p className="text-xs text-gray-400 mt-1">{t('settings.copyright')}</p>
         </div>
       </div>
 
@@ -370,18 +336,13 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
       <AlertDialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>确认退出登录？</AlertDialogTitle>
-            <AlertDialogDescription>
-              退出登录后，您需要重新登录才能访问个人信息和行程数据。
-            </AlertDialogDescription>
+            <AlertDialogTitle>{t('settings.logoutConfirmTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('settings.logoutConfirmDesc')}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleLogout}
-              className="bg-red-500 hover:bg-red-600"
-            >
-              确认退出
+            <AlertDialogCancel>{t('settings.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleLogout} className="bg-red-500 hover:bg-red-600">
+              {t('settings.logoutConfirm')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

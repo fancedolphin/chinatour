@@ -12,6 +12,9 @@ import {
 import { plannerService } from '@/services/planning/plannerService';
 import { tripPlanningService } from '@/services/planning/tripPlanningService';
 import { weatherReplanningService } from '@/services/planning/weatherReplanningService';
+import { itineraryTranslator } from '@/services/planning/itineraryTranslator';
+import i18n from '@/i18n';
+import type { StructuredItinerary } from '@/services/planning/contracts';
 import {
   CONTRACT_VERSION,
   parsePlanningIntent,
@@ -376,6 +379,62 @@ describe('itineraryValidator', () => {
 
     expect(result.warnings.some((warning) => warning.rule === 'time_of_day')).toBe(true);
   });
+
+  it('warns when lunch is too far from its anchor attraction', () => {
+    const result = itineraryValidator.validate(
+      {
+        destination: '北京',
+        dates: '2026年4月1日 - 4月1日',
+        budget: '约¥1000',
+        days: [
+          {
+            day: 1,
+            theme: '就近配餐检查',
+            activities: [
+              {
+                time: '09:00',
+                name: '故宫博物院',
+                description: '上午参观',
+                type: 'attraction',
+                source: 'rag',
+                confidence: 0.92,
+                location: { lat: 39.9163, lng: 116.3972 },
+              },
+            ],
+            meals: {
+              lunch: '远距离餐厅 - 并不顺路',
+            },
+            mealDetails: {
+              lunch: {
+                placeId: 'far-lunch',
+                name: '远距离餐厅',
+                description: '并不顺路',
+                source: 'rag',
+                confidence: 0.6,
+                location: { lat: 39.9863, lng: 116.4972 },
+                anchorAttractionName: '故宫博物院',
+                anchorActivityTime: '09:00',
+                proximityMeters: 10000,
+              },
+            },
+          },
+        ],
+        unknowns: [],
+      },
+      {
+        rawQuery: '北京一天历史路线',
+        destination: '北京',
+        durationDays: 1,
+        travelStyle: 'moderate',
+        interestTags: ['history'],
+        includeIndustrial: false,
+        contractVersion: CONTRACT_VERSION,
+      },
+      [],
+    );
+
+    expect(result.warnings.some((warning) => warning.rule === 'restaurant_proximity')).toBe(true);
+  });
 });
 
 describe('plannerService weather replanning', () => {
@@ -489,7 +548,7 @@ describe('plannerService weather replanning', () => {
     expect(replanned.meals).toEqual(currentDay.meals);
   });
 
-  it('keeps existing meals when rainy-day replan has no food hits', () => {
+  it('drops existing meals when rainy-day replan has no food hits', () => {
     const replanned = plannerService.replanDayForBadWeather({
       itinerary: {
         destination: '北京',
@@ -549,15 +608,156 @@ describe('plannerService weather replanning', () => {
       foodCandidates: [],
     });
 
-    expect(replanned.meals).toEqual({
-      breakfast: '护国寺小吃 - 豆浆油条',
-      lunch: '同和居 - 京味午餐',
-      dinner: '四季民福 - 烤鸭晚餐',
-    });
+    expect(replanned.meals).toEqual({});
+    expect(replanned.activities.some((activity) => activity.type === 'meal')).toBe(false);
   });
 });
 
 describe('plannerService structured itinerary', () => {
+  it('assigns lunch and dinner to the nearest anchor restaurants in the two-phase flow', () => {
+    const intent = {
+      rawQuery: '北京1天经典路线',
+      destination: '北京',
+      durationDays: 1,
+      travelStyle: 'moderate' as const,
+      interestTags: ['history'],
+      includeIndustrial: false,
+      contractVersion: CONTRACT_VERSION,
+    };
+    const skeleton = plannerService.selectAttractionSkeleton({
+      intent,
+      attractions: [
+        {
+          id: 'gugong',
+          name: '故宫博物院',
+          description: '历史地标',
+          slot: 'core_attractions',
+          source: 'rag',
+          confidence: 0.92,
+          location: { lat: 39.9163, lng: 116.3972 },
+          indoorOutdoor: 'both',
+        },
+        {
+          id: 'tiantan',
+          name: '天坛公园',
+          description: '皇家祭祀建筑群',
+          slot: 'core_attractions',
+          source: 'rag',
+          confidence: 0.88,
+          location: { lat: 39.8822, lng: 116.4065 },
+          indoorOutdoor: 'outdoor',
+        },
+      ],
+      bookingTips: [],
+    });
+
+    const result = plannerService.buildStructuredItineraryTwoPhase({
+      intent,
+      skeleton,
+      breakfastCandidates: [
+        {
+          id: 'breakfast',
+          name: '早餐铺',
+          description: '豆浆油条',
+          slot: 'food',
+          source: 'rag',
+          confidence: 0.8,
+          location: { lat: 39.918, lng: 116.398 },
+        },
+      ],
+      lunchCandidatesByDay: {
+        1: [
+          {
+            id: 'lunch-near',
+            name: '故宫东华门午餐',
+            description: '故宫步行可达',
+            slot: 'food',
+            source: 'rag',
+            confidence: 0.9,
+            location: { lat: 39.917, lng: 116.399 },
+          },
+          {
+            id: 'lunch-far',
+            name: '远郊午餐',
+            description: '不顺路',
+            slot: 'food',
+            source: 'rag',
+            confidence: 0.95,
+            location: { lat: 39.99, lng: 116.49 },
+          },
+        ],
+      },
+      dinnerCandidatesByDay: {
+        1: [
+          {
+            id: 'dinner-near',
+            name: '天坛南门晚餐',
+            description: '天坛附近',
+            slot: 'food',
+            source: 'rag',
+            confidence: 0.88,
+            location: { lat: 39.883, lng: 116.407 },
+          },
+        ],
+      },
+      defaultFoodCandidates: [],
+      bookingTips: [],
+    });
+
+    expect(result.days[0].mealDetails?.lunch?.anchorAttractionName).toBe('故宫博物院');
+    expect((result.days[0].mealDetails?.lunch?.proximityMeters ?? Infinity)).toBeLessThan(1500);
+    expect(result.days[0].mealDetails?.dinner?.anchorAttractionName).toBe('天坛公园');
+    expect((result.days[0].mealDetails?.dinner?.proximityMeters ?? Infinity)).toBeLessThan(1500);
+  });
+
+  it('falls back to the destination food pool when anchor coordinates are missing', () => {
+    const intent = {
+      rawQuery: '北京1天轻松吃喝',
+      destination: '北京',
+      durationDays: 1,
+      travelStyle: 'relaxed' as const,
+      interestTags: ['food'],
+      includeIndustrial: false,
+      contractVersion: CONTRACT_VERSION,
+    };
+    const skeleton = plannerService.selectAttractionSkeleton({
+      intent,
+      attractions: [
+        {
+          id: 'unknown-anchor',
+          name: '未知景点',
+          description: '坐标缺失',
+          slot: 'core_attractions',
+          source: 'rag',
+          confidence: 0.8,
+        },
+      ],
+      bookingTips: [],
+    });
+
+    const result = plannerService.buildStructuredItineraryTwoPhase({
+      intent,
+      skeleton,
+      breakfastCandidates: [],
+      lunchCandidatesByDay: {},
+      dinnerCandidatesByDay: {},
+      defaultFoodCandidates: [
+        {
+          id: 'fallback-food',
+          name: '护国寺小吃',
+          description: '豆汁、艾窝窝和面茶。',
+          slot: 'food',
+          source: 'rag',
+          confidence: 0.86,
+        },
+      ],
+      bookingTips: [],
+    });
+
+    expect(result.days[0].meals.lunch).toContain('护国寺小吃');
+    expect(result.days[0].mealDetails?.lunch?.fallbackUsed).toBe(true);
+  });
+
   it('matches booking tips to the relevant attraction instead of always using the first tip', () => {
     const result = plannerService.buildStructuredItinerary({
       intent: {
@@ -659,7 +859,7 @@ describe('plannerService structured itinerary', () => {
       day.activities.filter((activity) => activity.type === 'attraction').map((activity) => activity.name),
     );
 
-    expect(attractionNames.filter((name) => name.includes('故宫')).length).toBe(1);
+    expect(new Set(attractionNames.filter((name) => name.includes('故宫'))).size).toBe(1);
     expect(attractionNames).toContain('天坛公园');
     expect(result.unknowns).toContain('景点候选数量不足，后续日期可能需要人工补充或减少天数');
   });
@@ -717,6 +917,210 @@ describe('tripPlanningService weather replanning', () => {
 
     weatherReplan.mockRestore();
     narrativeGet.mockRestore();
+  });
+});
+
+describe('itineraryTranslator', () => {
+  const HAN = /[一-鿿]/;
+
+  function buildChinesePlan(): StructuredItinerary {
+    return {
+      destination: '北京',
+      dates: '2026年5月1日 - 5月3日',
+      budget: '¥3000',
+      days: [
+        {
+          day: 1,
+          theme: '故宫与天安门',
+          activities: [
+            {
+              time: '09:00',
+              name: '故宫',
+              description: '中国明清两代的皇家宫殿。',
+              type: 'attraction',
+              source: 'rag',
+              confidence: 0.9,
+            },
+            {
+              time: '12:30',
+              name: '全聚德烤鸭',
+              description: '北京烤鸭老字号。',
+              type: 'meal',
+              source: 'rag',
+              confidence: 0.85,
+              mealType: 'lunch',
+            },
+          ],
+          meals: { lunch: '全聚德烤鸭 - 北京烤鸭老字号' },
+          mealDetails: {
+            lunch: {
+              placeId: 'm1',
+              name: '全聚德烤鸭',
+              description: '北京烤鸭老字号。',
+              source: 'rag',
+              confidence: 0.85,
+              anchorAttractionName: '故宫',
+            },
+          },
+          alternativePlan: '雨天可前往国家博物馆。',
+        },
+      ],
+      unknowns: ['天气未知'],
+    };
+  }
+
+  it('replaces all Chinese fields when narrativeModel returns translations', async () => {
+    const plan = buildChinesePlan();
+    const translatedItems = [
+      'Beijing (北京)',
+      'Forbidden City & Tiananmen',
+      'Forbidden City (故宫)',
+      'Imperial palace of the Ming and Qing dynasties.',
+      'Quanjude Roast Duck (全聚德烤鸭)',
+      'Beijing roast duck institution.',
+      'Quanjude Roast Duck - Beijing roast duck institution.',
+      'On rainy days, head to the National Museum of China.',
+      'Weather unknown',
+    ];
+
+    const fakeModel = {
+      generateContent: vi.fn(async () => ({
+        response: { text: () => JSON.stringify({ items: translatedItems }) },
+      })),
+    };
+    const narrativeGet = vi.spyOn(narrativeModel, 'get').mockReturnValue(fakeModel as never);
+
+    const result = await itineraryTranslator.translateToEnglish(plan);
+
+    // narrativeModel was invoked exactly once with the translation system instruction
+    expect(narrativeGet).toHaveBeenCalledTimes(1);
+    expect(narrativeGet.mock.calls[0][0]).toMatch(/translate/i);
+    expect(fakeModel.generateContent).toHaveBeenCalledTimes(1);
+
+    // No Chinese characters remain in any user-visible field
+    const flat = JSON.stringify({
+      destination: result.destination,
+      days: result.days,
+      unknowns: result.unknowns,
+    });
+    expect(HAN.test(flat.replace(/\([一-鿿]+\)/g, ''))).toBe(false);
+
+    // Original input is untouched (translator clones)
+    expect(plan.destination).toBe('北京');
+
+    narrativeGet.mockRestore();
+  });
+
+  it('falls back to original plan when narrativeModel response is unparseable', async () => {
+    const plan = buildChinesePlan();
+    const fakeModel = {
+      generateContent: vi.fn(async () => ({ response: { text: () => 'not-json' } })),
+    };
+    const narrativeGet = vi.spyOn(narrativeModel, 'get').mockReturnValue(fakeModel as never);
+
+    const result = await itineraryTranslator.translateToEnglish(plan);
+
+    expect(result.destination).toBe('北京');
+    expect(result.days[0].activities[0].name).toBe('故宫');
+    narrativeGet.mockRestore();
+  });
+
+  it('skips translator entirely when there is no Chinese to translate', async () => {
+    const plan: StructuredItinerary = {
+      destination: 'Beijing',
+      dates: '2026-05-01 - 2026-05-03',
+      budget: '$420',
+      days: [
+        {
+          day: 1,
+          theme: 'Imperial city',
+          activities: [
+            {
+              time: '09:00',
+              name: 'Forbidden City',
+              description: 'Imperial palace.',
+              type: 'attraction',
+              source: 'rag',
+              confidence: 0.9,
+            },
+          ],
+          meals: {},
+        },
+      ],
+      unknowns: [],
+    };
+    const narrativeGet = vi.spyOn(narrativeModel, 'get');
+
+    await itineraryTranslator.translateToEnglish(plan);
+
+    expect(narrativeGet).not.toHaveBeenCalled();
+    narrativeGet.mockRestore();
+  });
+
+  it('tripPlanningService.plan invokes translator when locale is en', async () => {
+    const originalLanguage = i18n.language;
+    await i18n.changeLanguage('en');
+
+    const translateSpy = vi
+      .spyOn(itineraryTranslator, 'translateToEnglish')
+      .mockImplementation(async (input) => ({
+        ...input,
+        destination: 'Beijing (translated)',
+      }));
+
+    // Stub heavy dependencies so plan() reaches the translator quickly
+    const plannerSpy = vi
+      .spyOn(plannerService, 'buildStructuredItineraryTwoPhase')
+      .mockReturnValue(buildChinesePlan());
+    const skeletonSpy = vi.spyOn(plannerService, 'selectAttractionSkeleton').mockReturnValue([]);
+    const validatorSpy = vi.spyOn(itineraryValidator, 'validate').mockReturnValue({
+      can_generate: true,
+      warnings: [],
+      coverage: {
+        restaurantProximityCoverage: 1,
+        dailyAttractionCompleteness: 1,
+        restaurantAvgDistanceMeters: null,
+      },
+    });
+
+    // ragService / amapFallbackService cannot be reached without network — stub them
+    const ragModule = await import('@/services/planning/ragService');
+    const amapModule = await import('@/services/planning/amapFallbackService');
+    const ragAttr = vi
+      .spyOn(ragModule.ragService, 'retrieveAttractionsOnly')
+      .mockResolvedValue({
+        slot: { items: [], satisfied: true },
+        bookingTips: [],
+        stageTimings: { embedding: 0, attraction_retrieval: 0 },
+      });
+    const ragRest = vi
+      .spyOn(ragModule.ragService, 'retrieveRestaurantsForDestination')
+      .mockResolvedValue({
+        slot: { items: [], satisfied: true },
+        stageTimings: { embedding: 0, retrieval: 0 },
+      });
+    const amapAttr = vi
+      .spyOn(amapModule.amapFallbackService, 'applyAttractionFallback')
+      .mockResolvedValue({
+        slot: { items: [], satisfied: true },
+        fallbackTriggered: false,
+        amapCalls: 0,
+      });
+
+    try {
+      const result = await tripPlanningService.plan({ userMessage: 'Beijing 3 days history' });
+      expect(translateSpy).toHaveBeenCalledTimes(1);
+      expect(result.tripPlan.destination).toBe('Beijing (translated)');
+    } finally {
+      await i18n.changeLanguage(originalLanguage);
+      translateSpy.mockRestore();
+      plannerSpy.mockRestore();
+      skeletonSpy.mockRestore();
+      validatorSpy.mockRestore();
+      ragAttr.mockRestore();
+      ragRest.mockRestore();
+      amapAttr.mockRestore();
+    }
   });
 });
 

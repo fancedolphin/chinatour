@@ -7,7 +7,9 @@ import { plannerService } from './plannerService';
 import { planningMetricsStore } from './planningMetrics';
 import { ragService } from './ragService';
 import { weatherReplanningService } from './weatherReplanningService';
-import type { StructuredItinerary, TripPlanningResponse } from './contracts';
+import { itineraryTranslator } from './itineraryTranslator';
+import type { PlaceCandidate, SlotName, StructuredItinerary, TripPlanningResponse } from './contracts';
+import i18n, { getCurrentLocale } from '@/i18n';
 
 interface PlanInput {
   userMessage: string;
@@ -46,39 +48,168 @@ function createRequestId(): string {
   return `req_${Date.now()}_${random}`;
 }
 
+function buildAnchorKey(day: number, slot: 'lunch' | 'dinner'): string {
+  return `day${day}_${slot}`;
+}
+
 class TripPlanningService {
   async plan(input: PlanInput): Promise<TripPlanningResponse> {
     const requestId = createRequestId();
     const totalStart = performance.now();
 
     const intent = extractPlanningIntent(input.userMessage, input.currentPlan);
+    const attractionContext = await ragService.retrieveAttractionsOnly(intent, requestId);
 
-    const retrieval = await ragService.retrieveBySlots(intent, requestId);
-
-    const fallbackStart = performance.now();
-    const fallbackResult = await amapFallbackService.applyFallbackIfNeeded(intent, retrieval, requestId);
-    const fallbackMs = performance.now() - fallbackStart;
-
-    const plannerStart = performance.now();
-    const tripPlan = plannerService.buildStructuredItinerary({
+    const attractionFallbackStart = performance.now();
+    const attractionFallback = await amapFallbackService.applyAttractionFallback(
       intent,
-      slots: {
-        core_attractions: fallbackResult.slots.core_attractions,
-        food: fallbackResult.slots.food,
-      },
-      bookingTips: retrieval.bookingTips,
+      attractionContext.slot,
+      requestId,
+    );
+    const attractionFallbackMs = performance.now() - attractionFallbackStart;
+    let restaurantFallbackMs = 0;
+    let totalAmapCalls = attractionFallback.amapCalls;
+    let fallbackTriggered = attractionFallback.fallbackTriggered;
+
+    const skeleton = plannerService.selectAttractionSkeleton({
+      intent,
+      attractions: attractionFallback.slot.items,
+      bookingTips: attractionContext.bookingTips,
+    });
+    const restaurantAnchorCount = skeleton.reduce((count, day) => {
+      return count + Number(Boolean(day.morningAttraction)) + Number(Boolean(day.afternoonAttraction || day.morningAttraction));
+    }, 0);
+    const fallbackBudget = { remaining: Math.ceil(restaurantAnchorCount * 0.5) };
+    const restaurantFallbackCache = new Map<string, PlaceCandidate[]>();
+
+    const restaurantStart = performance.now();
+    const breakfastContext = await ragService.retrieveRestaurantsForDestination(
+      intent,
+      `${requestId}_breakfast`,
+    );
+    let breakfastSlot = breakfastContext.slot;
+
+    if (!breakfastSlot.satisfied) {
+      const restaurantFallbackStart = performance.now();
+      const fallback = await amapFallbackService.applyRestaurantFallbackNear(
+        undefined,
+        intent,
+        breakfastSlot,
+        `${requestId}_breakfast_fallback`,
+        { budget: fallbackBudget, cache: restaurantFallbackCache },
+      );
+      restaurantFallbackMs += performance.now() - restaurantFallbackStart;
+      breakfastSlot = fallback.slot;
+      totalAmapCalls += fallback.amapCalls;
+      fallbackTriggered = fallbackTriggered || fallback.fallbackTriggered;
+    }
+
+    const lunchCandidatesByDay: Record<number, PlaceCandidate[]> = {};
+    const dinnerCandidatesByDay: Record<number, PlaceCandidate[]> = {};
+    let restaurantProximityMs = breakfastContext.stageTimings.retrieval;
+
+    const retrieveRestaurantSlotNearAnchor = async (
+      anchor: PlaceCandidate,
+      key: string,
+    ): Promise<PlaceCandidate[]> => {
+      const firstPass = await ragService.retrieveRestaurantsNear(anchor, intent, key, {
+        radiusMeters: 1500,
+        matchCount: 4,
+        includeDestinationFallback: false,
+        includeKeywordFallback: false,
+      });
+      restaurantProximityMs += firstPass.stageTimings.retrieval;
+      if (firstPass.slot.satisfied) {
+        return firstPass.slot.items;
+      }
+
+      const expandedPass = await ragService.retrieveRestaurantsNear(anchor, intent, `${key}_3km`, {
+        radiusMeters: 3000,
+        matchCount: 6,
+        includeDestinationFallback: false,
+        includeKeywordFallback: false,
+      });
+      restaurantProximityMs += expandedPass.stageTimings.retrieval;
+      if (expandedPass.slot.satisfied) {
+        return expandedPass.slot.items;
+      }
+
+      const restaurantFallbackStart = performance.now();
+      const fallback = await amapFallbackService.applyRestaurantFallbackNear(
+        anchor,
+        intent,
+        expandedPass.slot,
+        `${key}_fallback`,
+        { budget: fallbackBudget, cache: restaurantFallbackCache },
+      );
+      restaurantFallbackMs += performance.now() - restaurantFallbackStart;
+      totalAmapCalls += fallback.amapCalls;
+      fallbackTriggered = fallbackTriggered || fallback.fallbackTriggered;
+
+      return fallback.slot.items;
+    };
+
+    for (const day of skeleton) {
+      const lunchAnchor = day.morningAttraction;
+      if (lunchAnchor) {
+        lunchCandidatesByDay[day.day] = await retrieveRestaurantSlotNearAnchor(
+          lunchAnchor,
+          `${requestId}_${buildAnchorKey(day.day, 'lunch')}`,
+        );
+      }
+
+      const dinnerAnchor = day.afternoonAttraction || day.morningAttraction;
+      if (dinnerAnchor) {
+        dinnerCandidatesByDay[day.day] = await retrieveRestaurantSlotNearAnchor(
+          dinnerAnchor,
+          `${requestId}_${buildAnchorKey(day.day, 'dinner')}`,
+        );
+      }
+    }
+
+    const fallbackMs = attractionFallbackMs + restaurantFallbackMs;
+    const plannerStart = performance.now();
+    let tripPlan = plannerService.buildStructuredItineraryTwoPhase({
+      intent,
+      skeleton,
+      breakfastCandidates: breakfastSlot.items,
+      lunchCandidatesByDay,
+      dinnerCandidatesByDay,
+      defaultFoodCandidates: breakfastSlot.items,
+      bookingTips: attractionContext.bookingTips,
     });
     const plannerMs = performance.now() - plannerStart;
 
+    if (getCurrentLocale() === 'en') {
+      tripPlan = await itineraryTranslator.translateToEnglish(tripPlan);
+    }
+
     const validatorStart = performance.now();
-    const validation = itineraryValidator.validate(tripPlan, intent, retrieval.bookingTips);
+    const validation = itineraryValidator.validate(tripPlan, intent, attractionContext.bookingTips);
     const validatorMs = performance.now() - validatorStart;
 
     const totalMs = performance.now() - totalStart;
+    const unsatisfiedSlots: SlotName[] = [];
+    if (!attractionFallback.slot.satisfied) {
+      unsatisfiedSlots.push('core_attractions');
+    }
+    if (
+      !breakfastSlot.satisfied ||
+      skeleton.some((day) => day.morningAttraction && !(lunchCandidatesByDay[day.day]?.length > 0)) ||
+      skeleton.some(
+        (day) =>
+          (day.afternoonAttraction || day.morningAttraction) &&
+          !(dinnerCandidatesByDay[day.day]?.length > 0),
+      )
+    ) {
+      unsatisfiedSlots.push('food');
+    }
 
     const stageTimings = {
-      embedding: retrieval.stageTimings.embedding,
-      rag_retrieve: retrieval.stageTimings.rag_retrieve,
+      embedding: attractionContext.stageTimings.embedding + breakfastContext.stageTimings.embedding,
+      attraction_retrieval: attractionContext.stageTimings.attraction_retrieval,
+      restaurant_proximity: restaurantProximityMs,
+      restaurant_fallback: restaurantFallbackMs,
       amap_fallback: fallbackMs,
       planner: plannerMs,
       validator: validatorMs,
@@ -89,14 +220,14 @@ class TripPlanningService {
       tripPlan,
       canGenerate: validation.can_generate,
       warningCount: validation.warnings.length,
-      fallbackTriggered: fallbackResult.fallbackTriggered,
-      amapCalls: fallbackResult.amapCalls,
+      fallbackTriggered,
+      amapCalls: totalAmapCalls,
     });
 
     planningMetricsStore.record({
       requestId,
-      fallbackTriggered: fallbackResult.fallbackTriggered,
-      amapCalls: fallbackResult.amapCalls,
+      fallbackTriggered,
+      amapCalls: totalAmapCalls,
       canGenerate: validation.can_generate,
       stageTimings,
     });
@@ -104,9 +235,9 @@ class TripPlanningService {
     const metricsSnapshot = planningMetricsStore.getReport();
     console.info(`[tripPlanningService][${requestId}]`, {
       stageTimings,
-      unsatisfiedSlots: retrieval.unsatisfiedSlots,
-      fallbackTriggered: fallbackResult.fallbackTriggered,
-      amapCalls: fallbackResult.amapCalls,
+      unsatisfiedSlots,
+      fallbackTriggered,
+      amapCalls: totalAmapCalls,
       can_generate: validation.can_generate,
       metricsSnapshot,
     });
@@ -118,8 +249,8 @@ class TripPlanningService {
       tripPlan,
       validation,
       diagnostics: {
-        unsatisfiedSlots: retrieval.unsatisfiedSlots,
-        amapCalls: fallbackResult.amapCalls,
+        unsatisfiedSlots,
+        amapCalls: totalAmapCalls,
         stageTimings,
       },
     };
@@ -131,7 +262,7 @@ class TripPlanningService {
     const intent =
       input.intent ||
       extractPlanningIntent(
-        input.userMessage || `${input.currentPlan.destination} 雨天改成室内方案`,
+        input.userMessage || i18n.t('planner.service.rainyIntent', { destination: input.currentPlan.destination }),
         input.currentPlan,
         { destination: input.currentPlan.destination },
       );
@@ -144,12 +275,16 @@ class TripPlanningService {
     });
     const plannerMs = performance.now() - plannerStart;
 
-    const tripPlan: StructuredItinerary = {
+    let tripPlan: StructuredItinerary = {
       ...input.currentPlan,
       days: input.currentPlan.days.map((day) =>
         day.day === input.day ? replanContext.dayPlan : day,
       ),
     };
+
+    if (getCurrentLocale() === 'en') {
+      tripPlan = await itineraryTranslator.translateToEnglish(tripPlan);
+    }
     const previousDay = input.currentPlan.days.find((day) => day.day === input.day);
     const didChangeDay = hasDayPlanChanged(previousDay, replanContext.dayPlan);
 
@@ -199,7 +334,9 @@ class TripPlanningService {
         amapCalls: 0,
         stageTimings: {
           embedding: 0,
-          rag_retrieve: 0,
+          attraction_retrieval: 0,
+          restaurant_proximity: 0,
+          restaurant_fallback: 0,
           amap_fallback: 0,
           planner: plannerMs,
           validator: validatorMs,
@@ -221,19 +358,24 @@ class TripPlanningService {
     amapCalls: number;
   }): string {
     if (!input.canGenerate) {
-      return '当前检索到的景点信息不足，已返回最小结构化结果。请补充更明确的目的地或偏好后重试。';
+      return i18n.t('planner.service.assistantInsufficient');
     }
 
     const lines: string[] = [];
-    lines.push(`已生成 ${input.tripPlan.days.length} 天「${input.tripPlan.destination}」行程。`);
+    lines.push(i18n.t('planner.service.assistantSummary', {
+      count: input.tripPlan.days.length,
+      destination: input.tripPlan.destination,
+    }));
     if (input.fallbackTriggered) {
-      lines.push(`关键槽位不足，已触发 AMap fallback（调用 ${input.amapCalls} 次）。`);
+      lines.push(i18n.t('planner.service.assistantFallbackTriggered', { count: input.amapCalls }));
     }
     if (input.warningCount > 0) {
-      lines.push(`检测到 ${input.warningCount} 条可执行性提醒，建议你在保存前查看。`);
+      lines.push(i18n.t('planner.service.assistantWarningCount', { count: input.warningCount }));
     }
     if (input.tripPlan.unknowns.length > 0) {
-      lines.push(`未确定信息：${input.tripPlan.unknowns.join('；')}`);
+      lines.push(i18n.t('planner.service.assistantUnknowns', {
+        value: input.tripPlan.unknowns.join('; '),
+      }));
     }
 
     return lines.join('\n');
@@ -245,14 +387,17 @@ class TripPlanningService {
     didChangeDay: boolean,
   ): string {
     if (!didChangeDay) {
-      return `第 ${day} 天暂未检索到更合适的室内替代点位，已保留原日程。`;
+      return i18n.t('planner.service.weatherKeptText', { day });
     }
 
     const activityNames = dayPlan.activities
       .filter((activity) => activity.type === 'attraction')
       .map((activity) => activity.name)
-      .join('、');
-    return `已将第 ${day} 天改为雨天室内安排，优先保留室内或室内外皆可的活动：${activityNames || '请查看更新后的日程'}。`;
+      .join(', ');
+    return i18n.t('planner.service.weatherChangedText', {
+      day,
+      names: activityNames || i18n.t('planner.service.weatherChangedFallback'),
+    });
   }
 }
 

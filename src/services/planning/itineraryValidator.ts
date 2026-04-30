@@ -1,11 +1,13 @@
 import type {
   BookingTip,
+  MealRecommendation,
   PlannedActivity,
   PlanningIntent,
   StructuredItinerary,
   ValidationResult,
   ValidationWarning,
 } from './contracts';
+import { isSimilarName, normalizeEntityName } from './entityNormalizer';
 
 function toRad(value: number): number {
   return (value * Math.PI) / 180;
@@ -28,6 +30,13 @@ function getAttractions(activities: PlannedActivity[]): PlannedActivity[] {
   return activities.filter((activity) => activity.type === 'attraction');
 }
 
+function hasMealActivity(
+  day: StructuredItinerary['days'][number],
+  slot: 'lunch' | 'dinner',
+): boolean {
+  return day.activities.some((activity) => activity.type === 'meal' && activity.mealType === slot);
+}
+
 function overloadThreshold(intent: PlanningIntent): number {
   if (intent.travelStyle === 'relaxed') return 2;
   if (intent.travelStyle === 'packed') return 4;
@@ -36,6 +45,34 @@ function overloadThreshold(intent: PlanningIntent): number {
 
 function hasBookingHint(activities: PlannedActivity[]): boolean {
   return activities.some((activity) => /预约|预订|门票|购票|实名/.test(activity.description));
+}
+
+function dayHasRelevantBookingConstraint(
+  activities: PlannedActivity[],
+  bookingTips: BookingTip[],
+): boolean {
+  return activities.some((activity) =>
+    bookingTips.some((tip) => {
+      const title = tip.title || '';
+      const content = tip.content || '';
+      const text = `${title} ${content}`;
+      const normalizedTitle = title.replace(/预约|预订|门票|购票|实名|提醒/g, '').trim();
+      const normalizedContent = content.replace(/预约|预订|门票|购票|实名|提醒/g, '').trim();
+      const normalizedActivity = normalizeEntityName(activity.name);
+      const normalizedText = normalizeEntityName(text);
+      const relaxedActivity = activity.name.replace(/博物院|博物馆|公园|景区|景点/g, '').trim();
+      return (
+        isSimilarName(activity.name, title) ||
+        isSimilarName(activity.name, content) ||
+        isSimilarName(activity.name, text) ||
+        text.includes(activity.name) ||
+        (Boolean(relaxedActivity) && text.includes(relaxedActivity)) ||
+        normalizedText.includes(normalizedActivity) ||
+        (Boolean(normalizedTitle) && activity.name.includes(normalizedTitle)) ||
+        (Boolean(normalizedContent) && activity.name.includes(normalizedContent))
+      );
+    }),
+  );
 }
 
 function parseHour(value: string): number | null {
@@ -56,6 +93,27 @@ function shouldWarnTimeOfDay(activity: PlannedActivity): boolean {
   return false;
 }
 
+function getMealDetail(
+  day: StructuredItinerary['days'][number],
+  slot: 'lunch' | 'dinner',
+): MealRecommendation | undefined {
+  return day.mealDetails?.[slot];
+}
+
+function getAnchorAttraction(
+  day: StructuredItinerary['days'][number],
+  mealDetail: MealRecommendation | undefined,
+): PlannedActivity | undefined {
+  if (!mealDetail?.anchorAttractionName) {
+    return undefined;
+  }
+
+  return day.activities.find(
+    (activity) =>
+      activity.type === 'attraction' && activity.name === mealDetail.anchorAttractionName,
+  );
+}
+
 class ItineraryValidator {
   validate(
     itinerary: StructuredItinerary,
@@ -64,9 +122,24 @@ class ItineraryValidator {
   ): ValidationResult {
     const warnings: ValidationWarning[] = [];
     const maxAttractionsPerDay = overloadThreshold(intent);
+    let daysWithAttractions = 0;
+    let eligibleRestaurantSlots = 0;
+    let proximityCoveredSlots = 0;
+    let proximityDistanceTotalMeters = 0;
+    let proximityDistanceCount = 0;
 
     itinerary.days.forEach((day) => {
       const attractions = getAttractions(day.activities);
+      if (attractions.length > 0) {
+        daysWithAttractions += 1;
+      } else {
+        warnings.push({
+          rule: 'daily_attraction_missing',
+          day: day.day,
+          severity: 'warning',
+          message: '当日缺少景点，无法生成完整行程。',
+        });
+      }
 
       if (attractions.length > maxAttractionsPerDay) {
         warnings.push({
@@ -93,7 +166,11 @@ class ItineraryValidator {
         }
       }
 
-      if (bookingTips.length > 0 && !hasBookingHint(attractions)) {
+      if (
+        bookingTips.length > 0 &&
+        dayHasRelevantBookingConstraint(attractions, bookingTips) &&
+        !hasBookingHint(attractions)
+      ) {
         warnings.push({
           rule: 'booking_constraint',
           day: day.day,
@@ -113,15 +190,74 @@ class ItineraryValidator {
           break;
         }
       }
-    });
 
-    const totalAttractions = itinerary.days
-      .flatMap((day) => day.activities)
-      .filter((activity) => activity.type === 'attraction').length;
+      for (const slot of ['lunch', 'dinner'] as const) {
+        if (attractions.length === 0) continue;
+        eligibleRestaurantSlots += 1;
+
+        if (!day.meals[slot] && !hasMealActivity(day, slot)) {
+          warnings.push({
+            rule: 'restaurant_missing',
+            day: day.day,
+            severity: 'warning',
+            message: `${slot === 'lunch' ? '午餐' : '晚餐'}缺少餐厅，无法确认行程完整性。`,
+          });
+          continue;
+        }
+
+        const mealDetail = getMealDetail(day, slot);
+        const anchorAttraction = getAnchorAttraction(day, mealDetail);
+
+        if (!mealDetail || !mealDetail.anchorAttractionName) {
+          warnings.push({
+            rule: 'restaurant_missing',
+            day: day.day,
+            severity: 'warning',
+            message: `${slot === 'lunch' ? '午餐' : '晚餐'}未绑定锚点景点，无法确认就近性。`,
+          });
+          continue;
+        }
+
+        if (!mealDetail.location || !anchorAttraction?.location) {
+          warnings.push({
+            rule: 'restaurant_proximity_missing',
+            day: day.day,
+            severity: 'warning',
+            message: `${slot === 'lunch' ? '午餐' : '晚餐'}缺少餐厅或景点坐标，无法确认就近性。`,
+          });
+          continue;
+        }
+
+        const km = distanceKm(anchorAttraction.location, mealDetail.location);
+        proximityDistanceTotalMeters += km * 1000;
+        proximityDistanceCount += 1;
+        if (km > 1.5) {
+          warnings.push({
+            rule: 'restaurant_proximity',
+            day: day.day,
+            severity: 'warning',
+            message: `${slot === 'lunch' ? '午餐' : '晚餐'}距离锚点景点约 ${km.toFixed(1)}km，未达到就近餐厅要求。`,
+          });
+          continue;
+        }
+        proximityCoveredSlots += 1;
+      }
+    });
+    const restaurantProximityCoverage =
+      eligibleRestaurantSlots === 0 ? 0 : proximityCoveredSlots / eligibleRestaurantSlots;
+    const dailyAttractionCompleteness =
+      itinerary.days.length === 0 ? 0 : daysWithAttractions / itinerary.days.length;
+    const restaurantAvgDistanceMeters =
+      proximityDistanceCount === 0 ? null : proximityDistanceTotalMeters / proximityDistanceCount;
 
     return {
-      can_generate: totalAttractions > 0,
+      can_generate: dailyAttractionCompleteness === 1 && restaurantProximityCoverage >= 0.8,
       warnings,
+      coverage: {
+        restaurantProximityCoverage,
+        dailyAttractionCompleteness,
+        restaurantAvgDistanceMeters,
+      },
     };
   }
 }

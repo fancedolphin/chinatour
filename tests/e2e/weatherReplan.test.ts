@@ -120,4 +120,99 @@ describe('weatherReplanningService', () => {
     retrieveOptionalSlots.mockRestore();
     fetchBookingTipsForDestination.mockRestore();
   });
+
+  it('couples meal recommendations to the new indoor anchor', async () => {
+    vi.spyOn(ragService, 'retrieveIndoorCandidates').mockResolvedValue([
+      {
+        id: 'indoor-museum',
+        name: '故宫博物院',
+        description: '室内文物路线',
+        slot: 'core_attractions',
+        source: 'rag',
+        confidence: 0.9,
+        indoorOutdoor: 'indoor',
+        location: { lat: 39.9163, lng: 116.3972 },
+      },
+    ]);
+    vi.spyOn(ragService, 'retrieveOptionalSlots').mockResolvedValue({
+      cultural_experiences: { satisfied: false, items: [] },
+      food: {
+        satisfied: true,
+        items: [
+          {
+            id: 'meal-near-museum',
+            name: '景山小吃',
+            description: '故宫旁本地餐馆',
+            slot: 'food',
+            source: 'rag',
+            confidence: 0.8,
+            location: { lat: 39.9249, lng: 116.3917 },
+          },
+        ],
+      },
+    });
+    vi.spyOn(ragService, 'fetchBookingTipsForDestination').mockResolvedValue([]);
+
+    const itinerary: StructuredItinerary = {
+      destination: '北京',
+      dates: '2026年4月1日 - 4月3日',
+      budget: '约¥3000',
+      days: [
+        {
+          day: 1,
+          theme: '户外公园线',
+          activities: [
+            {
+              time: '09:00',
+              name: '颐和园',
+              description: '户外园林',
+              type: 'attraction',
+              source: 'rag',
+              confidence: 0.9,
+              indoorOutdoor: 'outdoor',
+              location: { lat: 39.9999, lng: 116.2755 },
+            },
+          ],
+          meals: { lunch: '颐和园农家菜 - 远郊午餐' },
+          mealDetails: {
+            lunch: {
+              placeId: 'old-meal',
+              name: '颐和园农家菜',
+              description: '远郊午餐',
+              source: 'rag',
+              confidence: 0.7,
+              anchorAttractionName: '颐和园',
+            },
+          },
+        },
+      ],
+      unknowns: [],
+    };
+
+    const intent: PlanningIntent = {
+      rawQuery: '北京1天 雨天 室内',
+      destination: '北京',
+      durationDays: 1,
+      travelStyle: 'relaxed',
+      interestTags: [],
+      includeIndustrial: false,
+      contractVersion: '1.1',
+    };
+
+    const replanned = await weatherReplanningService.replanDayForBadWeather({
+      day: 1,
+      itinerary,
+      intent,
+    });
+
+    // 锚点已换成室内的故宫
+    const newAttraction = replanned.dayPlan.activities.find((a) => a.type === 'attraction');
+    expect(newAttraction?.name).toBe('故宫博物院');
+
+    // 餐厅锚点联动到新景点（不再是颐和园）
+    const lunch = replanned.dayPlan.mealDetails?.lunch;
+    if (lunch) {
+      expect(lunch.anchorAttractionName).not.toBe('颐和园');
+    }
+  });
 });

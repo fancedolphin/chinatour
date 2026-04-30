@@ -13,6 +13,7 @@ import { ImageWithFallback } from './figma/ImageWithFallback';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import type { SharedTripCard } from '@/services/sharedTripService';
+import { useT } from '@/i18n/useT';
 
 interface SharedTripFeedListProps {
   trips: SharedTripCard[];
@@ -47,6 +48,7 @@ export function SharedTripFeedList({
   formatDateRange,
   onRetry,
 }: SharedTripFeedListProps) {
+  const { t } = useT();
   if (loading) {
     return (
       <div className="space-y-4">
@@ -75,7 +77,7 @@ export function SharedTripFeedList({
     return (
       <div className="py-12 text-center">
         <p className="mb-4 text-gray-500">{error}</p>
-        <Button variant="outline" onClick={onRetry}>重试</Button>
+        <Button variant="outline" onClick={onRetry}>{t('feed.retry')}</Button>
       </div>
     );
   }
@@ -101,6 +103,8 @@ export function SharedTripFeedList({
         return (
           <div
             key={trip.id}
+            data-testid="shared-trip-card"
+            data-trip-id={trip.id}
             className={`overflow-hidden rounded-xl bg-white shadow-sm transition-shadow ${onOpenDetail ? 'cursor-pointer hover:shadow-md' : ''}`}
             onClick={() => onOpenDetail?.(trip.id)}
           >
@@ -108,6 +112,7 @@ export function SharedTripFeedList({
               {onOpenProfile ? (
                 <button
                   type="button"
+                  data-testid="author-link"
                   className="-m-2 flex items-center gap-2 rounded-lg p-2 transition-colors hover:bg-gray-50"
                   onClick={(event) => {
                     event.stopPropagation();
@@ -165,7 +170,7 @@ export function SharedTripFeedList({
                     {trip.budget && (
                       <span className="flex items-center gap-1">
                         <MapPin className="h-4 w-4" />
-                        预算：{trip.budget}
+                        {t('feed.budgetLabel', { budget: trip.budget })}
                       </span>
                     )}
                   </div>
@@ -226,7 +231,7 @@ export function SharedTripFeedList({
                     ) : (
                       <Download className="h-4 w-4" />
                     )}
-                    导入行程
+                    {t('feed.fork')}
                   </Button>
                 </div>
               </div>

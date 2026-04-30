@@ -1,9 +1,15 @@
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react-swc';
+import path from 'path';
 
-  import { defineConfig } from 'vite';
-  import react from '@vitejs/plugin-react-swc';
-  import path from 'path';
+const SUPPORTED_LOCALES = new Set(['zh', 'en']);
 
-  export default defineConfig({
+export default defineConfig(({ mode }) => {
+  // Mode 同时驱动：(1) Vite 自动加载 .env.{mode}；(2) dist/{locale} 输出目录。
+  // 未指定时（如 `vite build` 不带 --mode）默认走中文站，保持原有行为。
+  const locale = SUPPORTED_LOCALES.has(mode) ? mode : 'zh';
+
+  return {
     plugins: [react()],
     resolve: {
       extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
@@ -51,10 +57,16 @@
     },
     build: {
       target: 'esnext',
-      outDir: 'build',
+      outDir: `dist/${locale}`,
+      emptyOutDir: true,
     },
     server: {
       port: 3000,
       open: true,
     },
-  });
+    test: {
+      // Playwright owns tests/playwright/**; vitest must not pick those up.
+      exclude: ['node_modules/**', 'dist/**', 'tests/playwright/**'],
+    },
+  };
+});

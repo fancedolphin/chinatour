@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { TripPlannerBottomNav } from './components/TripPlannerBottomNav';
 import { PlanInputPage } from './components/PlanInputPage';
 import { MyTripsPage } from './components/MyTripsPage';
+import { TripMapPage, type TripMapPreviewPayload } from './components/TripMapPage';
 import { DestinationExplorePage } from './components/DestinationExplorePage';
 import { SharedTripDetailPage } from './components/SharedTripDetailPage';
 import { ProfilePage } from './components/ProfilePage';
@@ -106,6 +107,7 @@ function AppContent() {
   const [currentTab, setCurrentTab] = useState<AppTab>(initialRoute.tab);
   const [resumeTripId, setResumeTripId] = useState<string | null>(null);
   const [tripMapTripId, setTripMapTripId] = useState<string | null>(null);
+  const [plannerMapPreview, setPlannerMapPreview] = useState<TripMapPreviewPayload | null>(null);
   const [sharedTripDetailId, setSharedTripDetailId] = useState<string | null>(initialRoute.sharedTripDetailId);
   const [profileUserId, setProfileUserId] = useState<string | null>(initialRoute.profileUserId);
   const [profileReturn, setProfileReturn] = useState<ProfileReturnState | null>(null);
@@ -151,6 +153,9 @@ function AppContent() {
 
   const navigateToTab = (tab: AppTab) => {
     setCurrentTab(tab);
+    if (tab !== 'planner') {
+      setPlannerMapPreview(null);
+    }
     if (tab !== 'profile') {
       setProfileUserId(null);
       setProfileReturn(null);
@@ -212,14 +217,28 @@ function AppContent() {
 
     switch (currentTab) {
       case 'planner':
+        if (plannerMapPreview) {
+          return (
+            <TripMapPage
+              preview={plannerMapPreview}
+              onBack={() => setPlannerMapPreview(null)}
+            />
+          );
+        }
+
         return (
           <PlanInputPage
             onNavigateToTrips={() => navigateToTab('trips')}
             resumeTripId={resumeTripId ?? undefined}
             onClearResume={() => setResumeTripId(null)}
-            onOpenMap={(tripId) => {
-              setTripMapTripId(tripId);
-              navigateToTab('trips');
+            onOpenMap={(payload) => {
+              if (typeof payload === 'string') {
+                setTripMapTripId(payload);
+                navigateToTab('trips');
+                return;
+              }
+
+              setPlannerMapPreview(payload);
             }}
           />
         );

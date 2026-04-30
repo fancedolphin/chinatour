@@ -11,6 +11,7 @@ import { plannerService } from './plannerService';
 const HARD_GATES = {
   coreAttractionsRecallAt8: 0.85,
   foodRecallAt5: 0.75,
+  restaurantProximityCoverage: 0.8,
   itineraryExecutableRate: 0.9,
   constraintHitRate: 0.95,
   llmGeneratedRatio: 0.2,
@@ -24,6 +25,7 @@ export type PlanningScorecard = {
   intentMatchRate: number;
   coreAttractionsRecallAt8: number;
   foodRecallAt5: number;
+  restaurantProximityCoverage: number;
   itineraryExecutableRate: number;
   constraintHitRate: number;
   llmGeneratedRatio: number;
@@ -95,6 +97,9 @@ function compareAgainstBaseline(scorecard: PlanningScorecard): string[] {
   if (scorecard.foodRecallAt5 < HARD_GATES.foodRecallAt5) {
     failures.push('food_recall@5 below hard gate');
   }
+  if (scorecard.restaurantProximityCoverage < HARD_GATES.restaurantProximityCoverage) {
+    failures.push('restaurant_proximity_coverage below hard gate');
+  }
   if (scorecard.itineraryExecutableRate < HARD_GATES.itineraryExecutableRate) {
     failures.push('itinerary_executable_rate below hard gate');
   }
@@ -114,6 +119,12 @@ function compareAgainstBaseline(scorecard: PlanningScorecard): string[] {
   if (scorecard.foodRecallAt5 < planningScorecardBaseline.foodRecallAt5 - 0.03) {
     failures.push('food_recall@5 regressed by more than 3pp');
   }
+  if (
+    scorecard.restaurantProximityCoverage <
+    planningScorecardBaseline.restaurantProximityCoverage - 0.05
+  ) {
+    failures.push('restaurant_proximity_coverage regressed by more than 5pp');
+  }
   if (scorecard.itineraryExecutableRate < planningScorecardBaseline.itineraryExecutableRate - 0.02) {
     failures.push('itinerary_executable_rate regressed by more than 2pp');
   }
@@ -128,6 +139,8 @@ export function evaluatePlanningDataset(dataset = planningEvaluationDataset): Pl
   let matchedCore = 0;
   let totalExpectedFood = 0;
   let matchedFood = 0;
+  let proximityEligibleMeals = 0;
+  let proximityHitMeals = 0;
   let executableCases = 0;
   let bookingAwareCases = 0;
   let bookingSatisfiedCases = 0;
@@ -142,9 +155,28 @@ export function evaluatePlanningDataset(dataset = planningEvaluationDataset): Pl
       matchedIntentCases += 1;
     }
 
-    const itinerary = plannerService.buildStructuredItinerary({
+    const skeleton = plannerService.selectAttractionSkeleton({
       intent: extracted,
-      slots: caseItem.slots,
+      attractions: caseItem.slots.core_attractions.items,
+      bookingTips: caseItem.bookingTips,
+    });
+    const lunchCandidatesByDay = Object.fromEntries(
+      skeleton
+        .filter((day) => day.morningAttraction)
+        .map((day) => [day.day, caseItem.slots.food.items]),
+    );
+    const dinnerCandidatesByDay = Object.fromEntries(
+      skeleton
+        .filter((day) => day.afternoonAttraction || day.morningAttraction)
+        .map((day) => [day.day, caseItem.slots.food.items]),
+    );
+    const itinerary = plannerService.buildStructuredItineraryTwoPhase({
+      intent: extracted,
+      skeleton,
+      breakfastCandidates: caseItem.slots.food.items,
+      lunchCandidatesByDay,
+      dinnerCandidatesByDay,
+      defaultFoodCandidates: caseItem.slots.food.items,
       bookingTips: caseItem.bookingTips,
     });
     const validation = itineraryValidator.validate(itinerary, extracted, caseItem.bookingTips);
@@ -161,6 +193,8 @@ export function evaluatePlanningDataset(dataset = planningEvaluationDataset): Pl
     );
     totalAttractions += attractionActivities.length;
     llmAttractions += attractionActivities.filter((activity) => activity.source === 'llm').length;
+    proximityEligibleMeals += 1;
+    proximityHitMeals += validation.coverage.restaurantProximityCoverage;
 
     if (validation.can_generate) {
       executableCases += 1;
@@ -211,6 +245,7 @@ export function evaluatePlanningDataset(dataset = planningEvaluationDataset): Pl
     intentMatchRate: round(ratio(matchedIntentCases, dataset.length)),
     coreAttractionsRecallAt8: round(ratio(matchedCore, totalExpectedCore)),
     foodRecallAt5: round(ratio(matchedFood, totalExpectedFood)),
+    restaurantProximityCoverage: round(ratio(proximityHitMeals, proximityEligibleMeals)),
     itineraryExecutableRate: round(ratio(executableCases, dataset.length)),
     constraintHitRate: round(ratio(bookingSatisfiedCases, bookingAwareCases)),
     llmGeneratedRatio: round(ratio(llmAttractions, totalAttractions)),
@@ -232,6 +267,7 @@ export function renderPlanningScorecard(scorecard: PlanningScorecard): string {
     `| intent_match_rate | ${scorecard.intentMatchRate.toFixed(2)} | ${planningScorecardBaseline.intentMatchRate.toFixed(2)} | n/a |`,
     `| core_attractions_recall@8 | ${scorecard.coreAttractionsRecallAt8.toFixed(2)} | ${planningScorecardBaseline.coreAttractionsRecallAt8.toFixed(2)} | ${HARD_GATES.coreAttractionsRecallAt8.toFixed(2)} |`,
     `| food_recall@5 | ${scorecard.foodRecallAt5.toFixed(2)} | ${planningScorecardBaseline.foodRecallAt5.toFixed(2)} | ${HARD_GATES.foodRecallAt5.toFixed(2)} |`,
+    `| restaurant_proximity_coverage | ${scorecard.restaurantProximityCoverage.toFixed(2)} | ${planningScorecardBaseline.restaurantProximityCoverage.toFixed(2)} | ${HARD_GATES.restaurantProximityCoverage.toFixed(2)} |`,
     `| itinerary_executable_rate | ${scorecard.itineraryExecutableRate.toFixed(2)} | ${planningScorecardBaseline.itineraryExecutableRate.toFixed(2)} | ${HARD_GATES.itineraryExecutableRate.toFixed(2)} |`,
     `| constraint_hit_rate | ${scorecard.constraintHitRate.toFixed(2)} | ${planningScorecardBaseline.constraintHitRate.toFixed(2)} | ${HARD_GATES.constraintHitRate.toFixed(2)} |`,
     `| llm_generated_ratio | ${scorecard.llmGeneratedRatio.toFixed(2)} | ${planningScorecardBaseline.llmGeneratedRatio.toFixed(2)} | <= ${HARD_GATES.llmGeneratedRatio.toFixed(2)} |`,
@@ -247,8 +283,8 @@ export function renderPlanningScorecard(scorecard: PlanningScorecard): string {
 export function writePlanningScorecardArtifacts(scorecard: PlanningScorecard): string[] {
   const artifactDir = process.env.PLANNING_SCORECARD_DIR
     ? resolve(process.env.PLANNING_SCORECARD_DIR)
-    : existsSync('/mnt/d/chinaview/nodb')
-      ? resolve('/mnt/d/chinaview/nodb', 'artifacts')
+    : existsSync('/mnt/d/chinaview/Nodb')
+      ? resolve('/mnt/d/chinaview/Nodb', 'artifacts')
       : resolve(process.cwd(), 'artifacts');
   try {
     mkdirSync(artifactDir, { recursive: true });

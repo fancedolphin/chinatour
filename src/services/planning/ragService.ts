@@ -1,4 +1,5 @@
 import { supabase } from '@/utils/supabase/client';
+import { getCurrentLocale } from '@/i18n';
 import { generateEmbedding } from './embeddingService';
 import { isDuplicate } from './entityNormalizer';
 import type {
@@ -82,6 +83,25 @@ type TravelTipRow = {
 };
 
 type OptionalSlotName = Exclude<SlotName, 'core_attractions' | 'booking_constraints'> | 'food';
+
+type AttractionRetrievalResult = {
+  slot: SlotResult;
+  bookingTips: BookingTip[];
+  stageTimings: {
+    embedding: number;
+    attraction_retrieval: number;
+  };
+};
+
+type RestaurantRetrievalResult = {
+  slot: SlotResult;
+  stageTimings: {
+    embedding: number;
+    retrieval: number;
+  };
+  usedDestinationFallback: boolean;
+  usedKeywordFallback: boolean;
+};
 
 const OPTIONAL_SLOT_QUERIES: Record<
   OptionalSlotName,
@@ -286,10 +306,12 @@ function normalizeBookingTip(item: TravelTipRow): BookingTip {
 }
 
 async function fetchBookingTips(destination: string): Promise<BookingTip[]> {
+  const locale = getCurrentLocale();
   const { data: destinations, error: destinationError } = await supabase
     .from('destinations')
     .select('id, name')
     .ilike('name', `%${destination}%`)
+    .eq('locale', locale)
     .limit(5);
 
   if (destinationError) {
@@ -301,6 +323,7 @@ async function fetchBookingTips(destination: string): Promise<BookingTip[]> {
   let query = supabase
     .from('travel_tips')
     .select('id, title, content, category, is_important')
+    .eq('locale', locale)
     .limit(20)
     .order('created_at', { ascending: false });
 
@@ -320,48 +343,70 @@ async function fetchBookingTips(destination: string): Promise<BookingTip[]> {
     .slice(0, 6);
 }
 
-async function fallbackKeywordRetrieval(intent: PlanningIntent): Promise<{
-  coreAttractions: PlaceCandidate[];
-  food: PlaceCandidate[];
-}> {
-  const { data: destinations } = await supabase
+async function resolveDestinationIds(destination: string): Promise<string[]> {
+  const { data: destinations, error } = await supabase
     .from('destinations')
     .select('id, name')
-    .ilike('name', `%${intent.destination}%`)
+    .ilike('name', `%${destination}%`)
+    .eq('locale', getCurrentLocale())
     .limit(5);
 
-  const destinationIds = ((destinations as DestinationRow[] | null) || []).map((item) => item.id);
+  if (error) {
+    console.warn('[ragService] 查询 destinations 失败:', error.message);
+    return [];
+  }
+
+  return ((destinations as DestinationRow[] | null) || []).map((item) => item.id);
+}
+
+async function fallbackKeywordAttractions(intent: PlanningIntent): Promise<PlaceCandidate[]> {
+  const destinationIds = await resolveDestinationIds(intent.destination);
 
   let attractionQuery = supabase
     .from('attractions')
     .select('id, name, description, location_lat, location_lng, address, ticket_price, recommended_duration, tags, indoor_outdoor')
+    .eq('locale', getCurrentLocale())
     .order('popularity_score', { ascending: false, nullsFirst: false })
     .limit(6);
   if (destinationIds.length > 0) {
     attractionQuery = attractionQuery.in('destination_id', destinationIds);
   }
 
+  const { data: attractions } = await attractionQuery;
+
+  return ((attractions as AttractionRpcRow[] | null) || []).map((item) =>
+    normalizeAttraction({ ...item, similarity: 0.62 }),
+  );
+}
+
+async function fallbackKeywordRestaurants(intent: PlanningIntent): Promise<PlaceCandidate[]> {
+  const destinationIds = await resolveDestinationIds(intent.destination);
+
   let restaurantQuery = supabase
     .from('restaurants')
-    .select('id, name, description, location_lat, location_lng, address, price_range, specialties')
+    .select('id, name, description, location_lat, location_lng, address, price_range, specialties, cuisine_type')
+    .eq('locale', getCurrentLocale())
     .order('popularity_score', { ascending: false, nullsFirst: false })
     .limit(6);
   if (destinationIds.length > 0) {
     restaurantQuery = restaurantQuery.in('destination_id', destinationIds);
   }
 
-  const [{ data: attractions }, { data: restaurants }] = await Promise.all([
-    attractionQuery,
-    restaurantQuery,
-  ]);
+  const { data: restaurants } = await restaurantQuery;
 
-  const coreAttractions = ((attractions as AttractionRpcRow[] | null) || []).map((item) =>
-    normalizeAttraction({ ...item, similarity: 0.62 }),
-  );
-
-  const food = ((restaurants as RestaurantRpcRow[] | null) || []).map((item) =>
+  return ((restaurants as RestaurantRpcRow[] | null) || []).map((item) =>
     normalizeRestaurant({ ...item, similarity: 0.62 }),
   );
+}
+
+async function fallbackKeywordRetrieval(intent: PlanningIntent): Promise<{
+  coreAttractions: PlaceCandidate[];
+  food: PlaceCandidate[];
+}> {
+  const [coreAttractions, food] = await Promise.all([
+    fallbackKeywordAttractions(intent),
+    fallbackKeywordRestaurants(intent),
+  ]);
 
   return { coreAttractions, food };
 }
@@ -382,7 +427,216 @@ function shouldRetrieveSlot(intent: PlanningIntent, slot: Exclude<OptionalSlotNa
   return false;
 }
 
+function buildFoodQuery(intent: PlanningIntent, anchorName?: string): string {
+  return `${intent.destination} ${intent.cuisinePreference || ''} ${intent.rawQuery} ${anchorName || ''} food restaurant local cuisine nearby`;
+}
+
+async function queryAttractionsByEmbedding(
+  queryEmbedding: string,
+  destination: string,
+  matchCount = 6,
+): Promise<PlaceCandidate[]> {
+  const result = await supabase.rpc('match_attractions', {
+    query_embedding: queryEmbedding,
+    match_threshold: 0.55,
+    match_count: matchCount,
+    destination_filter: destination,
+    locale_filter: getCurrentLocale(),
+  });
+
+  if (result.error) {
+    console.warn('[ragService] match_attractions 失败:', result.error.message);
+    return [];
+  }
+
+  return dedupePlaceCandidates(
+    ((result.data as AttractionRpcRow[] | null) || []).map(normalizeAttraction),
+  );
+}
+
+async function queryRestaurantsByEmbedding(
+  queryEmbedding: string,
+  destination: string,
+  matchCount = 6,
+): Promise<PlaceCandidate[]> {
+  const result = await supabase.rpc('match_restaurants', {
+    query_embedding: queryEmbedding,
+    match_threshold: 0.55,
+    match_count: matchCount,
+    destination_filter: destination,
+    locale_filter: getCurrentLocale(),
+  });
+
+  if (result.error) {
+    console.warn('[ragService] match_restaurants 失败:', result.error.message);
+    return [];
+  }
+
+  return dedupePlaceCandidates(
+    ((result.data as RestaurantRpcRow[] | null) || []).map(normalizeRestaurant),
+  );
+}
+
 class RagService {
+  async retrieveAttractionsOnly(intent: PlanningIntent, requestId: string): Promise<AttractionRetrievalResult> {
+    const embeddingStart = performance.now();
+    let queryEmbedding: string | null = null;
+
+    try {
+      const embedding = await generateEmbedding(
+        `${intent.destination} ${intent.rawQuery} ${intent.interestTags.join(' ')}`,
+      );
+      queryEmbedding = toVectorLiteral(embedding);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[ragService][${requestId}] attraction embedding 失败，降级关键词检索:`, message);
+    }
+
+    const embeddingMs = performance.now() - embeddingStart;
+    const retrievalStart = performance.now();
+
+    let attractions = queryEmbedding
+      ? await queryAttractionsByEmbedding(queryEmbedding, intent.destination)
+      : [];
+    if (attractions.length === 0) {
+      attractions = dedupePlaceCandidates(await fallbackKeywordAttractions(intent));
+    }
+
+    const bookingTips = await fetchBookingTips(intent.destination);
+
+    return {
+      slot: {
+        items: attractions,
+        satisfied: satisfiesSlot(attractions),
+      },
+      bookingTips,
+      stageTimings: {
+        embedding: embeddingMs,
+        attraction_retrieval: performance.now() - retrievalStart,
+      },
+    };
+  }
+
+  async retrieveRestaurantsForDestination(
+    intent: PlanningIntent,
+    requestId: string,
+  ): Promise<RestaurantRetrievalResult> {
+    const embeddingStart = performance.now();
+    let queryEmbedding: string | null = null;
+
+    try {
+      const embedding = await generateEmbedding(buildFoodQuery(intent));
+      queryEmbedding = toVectorLiteral(embedding);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[ragService][${requestId}] restaurant embedding 失败，降级关键词检索:`, message);
+    }
+
+    const embeddingMs = performance.now() - embeddingStart;
+    const retrievalStart = performance.now();
+    let restaurants = queryEmbedding
+      ? await queryRestaurantsByEmbedding(queryEmbedding, intent.destination)
+      : [];
+    let usedKeywordFallback = false;
+
+    if (restaurants.length === 0) {
+      restaurants = dedupePlaceCandidates(await fallbackKeywordRestaurants(intent));
+      usedKeywordFallback = restaurants.length > 0;
+    }
+
+    return {
+      slot: {
+        items: restaurants,
+        satisfied: satisfiesSlot(restaurants),
+      },
+      stageTimings: {
+        embedding: embeddingMs,
+        retrieval: performance.now() - retrievalStart,
+      },
+      usedDestinationFallback: false,
+      usedKeywordFallback,
+    };
+  }
+
+  async retrieveRestaurantsNear(
+    attraction: PlaceCandidate,
+    intent: PlanningIntent,
+    requestId: string,
+    options?: {
+      radiusMeters?: number;
+      matchCount?: number;
+      includeDestinationFallback?: boolean;
+      includeKeywordFallback?: boolean;
+    },
+  ): Promise<RestaurantRetrievalResult> {
+    const radiusMeters = options?.radiusMeters ?? 1500;
+    const matchCount = options?.matchCount ?? 4;
+    const includeDestinationFallback = options?.includeDestinationFallback ?? true;
+    const includeKeywordFallback = options?.includeKeywordFallback ?? true;
+    const embeddingStart = performance.now();
+    let queryEmbedding: string | null = null;
+
+    try {
+      const embedding = await generateEmbedding(buildFoodQuery(intent, attraction.name));
+      queryEmbedding = toVectorLiteral(embedding);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[ragService][${requestId}] nearby restaurant embedding 失败，降级目的地检索:`, message);
+    }
+
+    const embeddingMs = performance.now() - embeddingStart;
+    const retrievalStart = performance.now();
+    let restaurants: PlaceCandidate[] = [];
+    let usedDestinationFallback = !attraction.location;
+    let usedKeywordFallback = false;
+
+    if (queryEmbedding && attraction.location) {
+      const result = await supabase.rpc('match_restaurants_near', {
+        query_embedding: queryEmbedding,
+        center_lat: attraction.location.lat,
+        center_lng: attraction.location.lng,
+        radius_meters: radiusMeters,
+        match_threshold: 0.4,
+        match_count: matchCount,
+        destination_filter: intent.destination,
+        locale_filter: getCurrentLocale(),
+      });
+
+      if (result.error) {
+        console.warn('[ragService] match_restaurants_near 失败:', result.error.message);
+      } else {
+        restaurants = dedupePlaceCandidates(
+          ((result.data as RestaurantRpcRow[] | null) || []).map(normalizeRestaurant),
+        );
+      }
+    }
+
+    if (restaurants.length === 0 && includeDestinationFallback) {
+      usedDestinationFallback = true;
+      restaurants = queryEmbedding
+        ? await queryRestaurantsByEmbedding(queryEmbedding, intent.destination, 6)
+        : [];
+    }
+
+    if (restaurants.length === 0 && includeKeywordFallback) {
+      restaurants = dedupePlaceCandidates(await fallbackKeywordRestaurants(intent));
+      usedKeywordFallback = restaurants.length > 0;
+    }
+
+    return {
+      slot: {
+        items: restaurants,
+        satisfied: restaurants.length > 0,
+      },
+      stageTimings: {
+        embedding: embeddingMs,
+        retrieval: performance.now() - retrievalStart,
+      },
+      usedDestinationFallback,
+      usedKeywordFallback,
+    };
+  }
+
   async retrieveBySlots(intent: PlanningIntent, requestId: string): Promise<RagRetrievalResult> {
     const embeddingStart = performance.now();
     let queryEmbedding: string | null = null;
@@ -411,12 +665,14 @@ class RagService {
           match_threshold: 0.55,
           match_count: 6,
           destination_filter: intent.destination,
+          locale_filter: getCurrentLocale(),
         }),
         supabase.rpc('match_restaurants', {
           query_embedding: queryEmbedding,
           match_threshold: 0.55,
           match_count: 6,
           destination_filter: intent.destination,
+          locale_filter: getCurrentLocale(),
         }),
         this.queryOptionalSlotsFromEmbedding(
           intent,
@@ -530,6 +786,7 @@ class RagService {
       match_threshold: 0.5,
       match_count: 8,
       destination_filter: intent.destination,
+      locale_filter: getCurrentLocale(),
     });
 
     if (indoorResult.error) {
@@ -557,6 +814,7 @@ class RagService {
           match_threshold: config.threshold,
           match_count: config.limit,
           destination_filter: intent.destination,
+          locale_filter: getCurrentLocale(),
         };
         if (slot === 'events') {
           params.month_filter = intent.travelMonth ?? null;

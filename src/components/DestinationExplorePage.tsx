@@ -9,6 +9,8 @@ import { followService } from '@/services/followService';
 import { searchService, type SearchSortBy, type SearchUser } from '@/services/searchService';
 import { sharedTripService, type SharedTripCard, type SharedTripSortBy } from '@/services/sharedTripService';
 import { SharedTripFeedList } from './SharedTripFeedList';
+import { useT } from '@/i18n/useT';
+import { formatDateRange as fmtDateRange } from '@/utils/formatters';
 
 interface DestinationExplorePageProps {
   onImportSuccess?: (newTripId: string) => void;
@@ -53,6 +55,7 @@ export function DestinationExplorePage({
   onOpenDetail,
   onOpenProfile,
 }: DestinationExplorePageProps = {}) {
+  const { t, locale } = useT();
   const { currentUser } = useAuthContext();
   const [trips, setTrips] = useState<SharedTripCard[]>([]);
   const [userResults, setUserResults] = useState<SearchUser[]>([]);
@@ -62,7 +65,7 @@ export function DestinationExplorePage({
   const [savedTrips, setSavedTrips] = useState<Set<string>>(new Set());
   const [likedTrips, setLikedTrips] = useState<Set<string>>(new Set());
   const [forkingId, setForkingId] = useState<string | null>(null);
-  const [emptyMessage, setEmptyMessage] = useState('暂无公开行程');
+  const [emptyMessage, setEmptyMessage] = useState(() => t('explore.emptyDefault'));
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [hotSearches, setHotSearches] = useState<string[]>([]);
@@ -77,15 +80,15 @@ export function DestinationExplorePage({
 
   const tabs: Array<{ value: ExploreTab; label: string }> = currentUser
     ? [
-        { value: 'following', label: '关注' },
-        { value: 'recommend', label: '推荐' },
-        { value: 'hot', label: '最热' },
-        { value: 'latest', label: '最新' },
+        { value: 'following', label: t('explore.tabFollowing') },
+        { value: 'recommend', label: t('explore.tabRecommended') },
+        { value: 'hot', label: t('explore.tabHottest') },
+        { value: 'latest', label: t('explore.tabNewest') },
       ]
     : [
-        { value: 'recommend', label: '推荐' },
-        { value: 'hot', label: '最热' },
-        { value: 'latest', label: '最新' },
+        { value: 'recommend', label: t('explore.tabRecommended') },
+        { value: 'hot', label: t('explore.tabHottest') },
+        { value: 'latest', label: t('explore.tabNewest') },
       ];
 
   const searchSortBy = useMemo<SearchSortBy>(() => {
@@ -115,7 +118,7 @@ export function DestinationExplorePage({
         setHotSearches(nextHotSearches);
         setPopularTags(nextPopularTags);
       } catch (metaError) {
-        console.error('[DestinationExplorePage] 加载搜索元数据失败:', metaError);
+        console.error('[DestinationExplorePage]', t('explore.loadMetaFailed'), metaError);
       }
     };
 
@@ -141,18 +144,18 @@ export function DestinationExplorePage({
         setUserResults([]);
 
         let data: SharedTripCard[] = [];
-        let nextEmptyMessage = '暂无公开行程';
+        let nextEmptyMessage = t('explore.emptyDefault');
 
         if (sort === 'following') {
           if (!currentUser) {
-            nextEmptyMessage = '请先登录后查看关注动态';
+            nextEmptyMessage = t('explore.emptyFollowingLogin');
           } else {
             data = await sharedTripService.getFollowingFeed(currentUser.id);
             if (data.length === 0) {
               const counts = await followService.getFollowCounts(currentUser.id);
               nextEmptyMessage = counts.following === 0
-                ? '关注感兴趣的旅行者，这里会出现他们的行程动态'
-                : '你关注的旅行者还没有发布新行程';
+                ? t('explore.emptyFollowingNoTags')
+                : t('explore.emptyFollowingNoNew');
             }
           }
         } else {
@@ -194,7 +197,7 @@ export function DestinationExplorePage({
       } catch (loadError) {
         if (!cancelled) {
           console.error('[DestinationExplorePage] 加载失败:', loadError);
-          setError(loadError instanceof Error ? loadError.message : '加载失败');
+          setError(loadError instanceof Error ? loadError.message : t('explore.loadFailed'));
         }
       } finally {
         if (!cancelled) {
@@ -226,13 +229,13 @@ export function DestinationExplorePage({
         setTrips(tripResult.trips);
         setUserResults(matchingUsers);
         if (tripResult.total > 0) {
-          setEmptyMessage(`找到 ${tripResult.total} 条相关行程`);
+          setEmptyMessage(t('explore.foundTrips', { count: tripResult.total }));
         } else if (normalizedQuery && selectedTags.length > 0) {
-          setEmptyMessage('没有匹配当前关键词和标签的结果');
+          setEmptyMessage(t('explore.noMatchKeyword'));
         } else if (normalizedQuery) {
-          setEmptyMessage('未找到相关行程，换个关键词试试');
+          setEmptyMessage(t('explore.noMatchTryOther'));
         } else {
-          setEmptyMessage('未找到符合筛选条件的行程');
+          setEmptyMessage(t('explore.noMatchFilter'));
         }
 
         if (normalizedQuery) {
@@ -274,7 +277,7 @@ export function DestinationExplorePage({
       } catch (searchError) {
         if (!cancelled) {
           console.error('[DestinationExplorePage] 搜索失败:', searchError);
-          setError(searchError instanceof Error ? searchError.message : '搜索失败');
+          setError(searchError instanceof Error ? searchError.message : t('explore.searchFailed'));
         }
       } finally {
         if (!cancelled) {
@@ -304,7 +307,7 @@ export function DestinationExplorePage({
 
   const handleToggleLike = async (sharedTripId: string) => {
     if (!currentUser) {
-      toast.error('请先登录');
+      toast.error(t('common.loginRequired'));
       return;
     }
 
@@ -321,13 +324,13 @@ export function DestinationExplorePage({
       });
       updateTripLikeCount(sharedTripId, newLiked ? 1 : -1);
     } catch {
-      toast.error('操作失败');
+      toast.error(t('explore.actionFailed'));
     }
   };
 
   const handleToggleSave = async (sharedTripId: string) => {
     if (!currentUser) {
-      toast.error('请先登录');
+      toast.error(t('common.loginRequired'));
       return;
     }
 
@@ -343,23 +346,24 @@ export function DestinationExplorePage({
         return next;
       });
     } catch {
-      toast.error('操作失败');
+      toast.error(t('explore.actionFailed'));
     }
   };
 
   const handleFork = async (sharedTripId: string) => {
     if (!currentUser) {
-      toast.error('请先登录');
+      toast.error(t('common.loginRequired'));
       return;
     }
 
     try {
       setForkingId(sharedTripId);
       const newTripId = await sharedTripService.forkTrip(sharedTripId, currentUser.id);
-      toast.success('行程已导入，快去修改成你的专属路线！');
+      toast.success(t('explore.forkSuccess'));
       onImportSuccess?.(newTripId);
     } catch (forkError) {
-      toast.error('导入失败：' + (forkError instanceof Error ? forkError.message : '未知错误'));
+      const message = forkError instanceof Error ? forkError.message : t('common.unknownError');
+      toast.error(t('explore.forkFailed', { message }));
     } finally {
       setForkingId(null);
     }
@@ -394,9 +398,7 @@ export function DestinationExplorePage({
     if (!start || !end) {
       return '';
     }
-    const startDate = new Date(start);
-    const endDate = new Date(end);
-    return `${startDate.getFullYear()}年${startDate.getMonth() + 1}月${startDate.getDate()}日 - ${endDate.getMonth() + 1}月${endDate.getDate()}日`;
+    return fmtDateRange(start, end, locale);
   };
 
   const searchSummary = useMemo(() => {
@@ -406,13 +408,13 @@ export function DestinationExplorePage({
 
     const parts = [];
     if (normalizedQuery) {
-      parts.push(`关键词「${normalizedQuery}」`);
+      parts.push(t('explore.queryKeywordPart', { value: normalizedQuery }));
     }
     if (selectedTags.length > 0) {
-      parts.push(`标签 ${selectedTags.join(' / ')}`);
+      parts.push(t('explore.queryTagsPart', { value: selectedTags.join(' / ') }));
     }
     return parts.join(' · ');
-  }, [isSearchMode, normalizedQuery, selectedTags]);
+  }, [isSearchMode, normalizedQuery, selectedTags, t]);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
@@ -424,7 +426,7 @@ export function DestinationExplorePage({
               <input
                 type="text"
                 value={searchQuery}
-                placeholder="搜索行程、目的地、用户"
+                placeholder={t('explore.searchPlaceholder')}
                 className="flex-1 bg-transparent text-sm outline-none"
                 onFocus={() => setShowHistory(searchQuery.trim().length === 0 && searchHistory.length > 0)}
                 onChange={(event) => {
@@ -451,14 +453,14 @@ export function DestinationExplorePage({
                 <div className="mb-2 flex items-center justify-between">
                   <div className="flex items-center gap-2 text-sm text-gray-600">
                     <History className="h-4 w-4" />
-                    搜索历史
+                    {t('explore.searchHistory')}
                   </div>
                   <button
                     type="button"
                     className="text-xs text-gray-500 transition-colors hover:text-gray-700"
                     onClick={handleClearAllHistory}
                   >
-                    清空全部
+                    {t('explore.clearAll')}
                   </button>
                 </div>
 
@@ -511,7 +513,7 @@ export function DestinationExplorePage({
           <div className="mb-4 rounded-xl bg-white p-4">
             <div className="mb-3 flex items-center gap-2">
               <TrendingUp className="h-4 w-4 text-red-500" />
-              <h2 className="text-gray-900">热门搜索</h2>
+              <h2 className="text-gray-900">{t('explore.popularSearches')}</h2>
             </div>
             <div className="flex flex-wrap gap-2">
               {hotSearches.map((search) => (
@@ -535,12 +537,12 @@ export function DestinationExplorePage({
           <div className="mb-4 rounded-xl bg-white p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <p className="text-sm text-gray-500">全局搜索</p>
+                <p className="text-sm text-gray-500">{t('explore.globalSearch')}</p>
                 <h2 className="text-gray-900">{searchSummary}</h2>
               </div>
               <div className="text-right text-sm text-gray-500">
-                <div>{trips.length} 条行程结果</div>
-                {normalizedQuery && <div>{userResults.length} 位相关用户</div>}
+                <div>{t('explore.tripsCount', { count: trips.length })}</div>
+                {normalizedQuery && <div>{t('explore.usersCount', { count: userResults.length })}</div>}
               </div>
             </div>
           </div>
@@ -550,7 +552,7 @@ export function DestinationExplorePage({
           <div className="mb-4 rounded-xl bg-white p-4">
             <div className="mb-3 flex items-center gap-2">
               <Users className="h-4 w-4 text-blue-500" />
-              <h2 className="text-gray-900">相关用户</h2>
+              <h2 className="text-gray-900">{t('explore.relatedUsers')}</h2>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               {userResults.map((user) => (
@@ -569,10 +571,10 @@ export function DestinationExplorePage({
                     <div className="truncate text-sm text-gray-900">{user.displayName}</div>
                     <div className="truncate text-xs text-gray-500">@{user.username}</div>
                     <div className="mt-1 truncate text-xs text-gray-600">
-                      {user.bio || '这个人很低调，还没有填写简介。'}
+                      {user.bio || t('explore.userBioFallback')}
                     </div>
                     <div className="mt-2 text-xs text-gray-500">
-                      {user.followersCount} 粉丝 · 关注 {user.followingCount}
+                      {t('explore.followersFollowing', { followers: user.followersCount, following: user.followingCount })}
                     </div>
                   </div>
                 </button>

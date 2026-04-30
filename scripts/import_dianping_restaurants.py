@@ -428,6 +428,9 @@ def build_restaurant_payloads(
                 "review_count": review_count,
                 "menu_image_url": menu_image_url,
                 "city": city,
+                "dianping_url": collapse_ws(str(matched_position["link_dianping"]))
+                    if matched_position and matched_position.get("link_dianping")
+                    else None,
             }
         )
 
@@ -590,11 +593,11 @@ ON CONFLICT (id) DO UPDATE SET
 INSERT INTO public.restaurants (
   id, destination_id, name, name_en, cuisine_type, description, location_lat, location_lng, address,
   price_range, meal_type, specialties, dietary_options, opening_hours, reservation_required,
-  popularity_score, avg_rating, review_count, menu_image_url, embedding, updated_at
+  popularity_score, avg_rating, review_count, menu_image_url, dianping_url, embedding, updated_at
 ) VALUES (
   {id}, {destination_id}, {name}, {name_en}, {cuisine_type}, {description}, {location_lat}, {location_lng}, {address},
   {price_range}, {meal_type}, {specialties}, {dietary_options}, {opening_hours}, {reservation_required},
-  {popularity_score}, {avg_rating}, {review_count}, {menu_image_url}, {embedding}, NOW()
+  {popularity_score}, {avg_rating}, {review_count}, {menu_image_url}, {dianping_url}, {embedding}, NOW()
 )
 ON CONFLICT (id) DO UPDATE SET
   destination_id = EXCLUDED.destination_id,
@@ -615,6 +618,7 @@ ON CONFLICT (id) DO UPDATE SET
   avg_rating = EXCLUDED.avg_rating,
   review_count = EXCLUDED.review_count,
   menu_image_url = EXCLUDED.menu_image_url,
+  dianping_url = EXCLUDED.dianping_url,
   embedding = EXCLUDED.embedding,
   updated_at = NOW();
 """.format(
@@ -637,6 +641,7 @@ ON CONFLICT (id) DO UPDATE SET
                 avg_rating=str(restaurant["avg_rating"]) if restaurant["avg_rating"] is not None else "NULL",
                 review_count=str(restaurant["review_count"]),
                 menu_image_url=sql_string(restaurant["menu_image_url"]),
+                dianping_url=sql_string(restaurant.get("dianping_url")),
                 embedding=sql_vector(restaurant.get("embedding")),
             ).strip()
         )

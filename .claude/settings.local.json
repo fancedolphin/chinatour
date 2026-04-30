@@ -50,7 +50,11 @@
       "Bash(node:*)",
       "mcp__linear-server__list_issue_labels",
       "mcp__linear-server__list_issue_statuses",
-      "Bash(npx --no-install tsc --noEmit --pretty)"
+      "Bash(npx --no-install tsc --noEmit --pretty)",
+      "mcp__linear-server__save_comment",
+      "Bash(npm run *)",
+      "mcp__linear-server__get_document",
+      "Bash(npm test *)"
     ]
   },
   "enableAllProjectMcpServers": true,

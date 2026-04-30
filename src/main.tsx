@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
+import "./i18n";
 
 async function clearStaleDevServiceWorkers() {
   if (!import.meta.env.DEV || typeof window === "undefined") {

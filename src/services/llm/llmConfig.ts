@@ -1,10 +1,4 @@
-import {
-  GoogleGenerativeAI,
-  HarmBlockThreshold,
-  HarmCategory,
-  type Content,
-  type GenerationConfig,
-} from '@google/generative-ai';
+import { supabase } from '@/utils/supabase/client';
 
 export const GEMINI_MODELS = {
   PLANNER: 'gemini-2.5-flash',
@@ -13,14 +7,8 @@ export const GEMINI_MODELS = {
 } as const;
 
 const TRAVEL_SAFETY = [
-  {
-    category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-    threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-  },
-  {
-    category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-    threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-  },
+  { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
+  { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
 ] as const;
 
 export const TOKEN_BUDGET = {
@@ -28,6 +16,23 @@ export const TOKEN_BUDGET = {
   NARRATIVE_CONTEXT_MAX: 6_000,
   DAILY_API_CALLS_LIMIT: 500,
 } as const;
+
+export interface ContentPart {
+  text: string;
+}
+
+export interface Content {
+  role: 'user' | 'model';
+  parts: ContentPart[];
+}
+
+export interface GenerationConfig {
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  maxOutputTokens?: number;
+  responseMimeType?: string;
+}
 
 const MODEL_CONFIG = {
   planner: {
@@ -49,45 +54,104 @@ const MODEL_CONFIG = {
   },
 } as const;
 
-let cachedGenAI: GoogleGenerativeAI | null = null;
-
-function getApiKey(): string {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
-  if (!apiKey) {
-    throw new Error('VITE_GEMINI_API_KEY 未配置');
-  }
-  return apiKey;
+export interface GeminiResult {
+  response: { text: () => string };
 }
 
-function getGenAI(): GoogleGenerativeAI {
-  if (!cachedGenAI) {
-    cachedGenAI = new GoogleGenerativeAI(getApiKey());
-  }
-  return cachedGenAI;
+interface ProxyPayload {
+  model: string;
+  systemInstruction?: string;
+  contents: Content[];
+  generationConfig: GenerationConfig;
+  safetySettings: ReadonlyArray<{ category: string; threshold: string }>;
 }
 
-function resolveModel(kind: keyof typeof MODEL_CONFIG, systemInstruction?: string) {
-  const config = MODEL_CONFIG[kind];
-  return getGenAI().getGenerativeModel({
-    model: config.model,
-    generationConfig: config.generationConfig,
-    safetySettings: [...TRAVEL_SAFETY],
-    systemInstruction,
+async function invokeProxy(payload: ProxyPayload): Promise<GeminiResult> {
+  const { data, error } = await supabase.functions.invoke('gemini-proxy', {
+    body: payload,
   });
+  if (error) {
+    throw new Error(`gemini-proxy invoke failed: ${error.message ?? 'unknown'}`);
+  }
+  if (data && typeof data === 'object' && 'error' in data) {
+    throw new Error(`gemini-proxy upstream error: ${(data as { error: string }).error}`);
+  }
+  const text =
+    data && typeof data === 'object' && 'text' in data && typeof (data as { text: unknown }).text === 'string'
+      ? (data as { text: string }).text
+      : '';
+  return { response: { text: () => text } };
+}
+
+function normalizePromptToContents(prompt: string | Content | Content[]): Content[] {
+  if (typeof prompt === 'string') {
+    return [{ role: 'user', parts: [{ text: prompt }] }];
+  }
+  if (Array.isArray(prompt)) {
+    return prompt;
+  }
+  return [prompt];
+}
+
+function buildModel(kind: keyof typeof MODEL_CONFIG, systemInstruction?: string) {
+  const config = MODEL_CONFIG[kind];
+  return {
+    async generateContent(prompt: string | Content | Content[]): Promise<GeminiResult> {
+      return invokeProxy({
+        model: config.model,
+        systemInstruction,
+        contents: normalizePromptToContents(prompt),
+        generationConfig: config.generationConfig,
+        safetySettings: TRAVEL_SAFETY,
+      });
+    },
+    startChat(options: { history: Content[] }) {
+      return startChatInternal(kind, systemInstruction, options.history);
+    },
+  };
+}
+
+function startChatInternal(
+  kind: keyof typeof MODEL_CONFIG,
+  systemInstruction: string | undefined,
+  history: Content[],
+) {
+  const config = MODEL_CONFIG[kind];
+  let currentHistory: Content[] = [...history];
+  return {
+    async sendMessage(userMessage: string): Promise<GeminiResult> {
+      const contents: Content[] = [
+        ...currentHistory,
+        { role: 'user', parts: [{ text: userMessage }] },
+      ];
+      const result = await invokeProxy({
+        model: config.model,
+        systemInstruction,
+        contents,
+        generationConfig: config.generationConfig,
+        safetySettings: TRAVEL_SAFETY,
+      });
+      currentHistory = [
+        ...contents,
+        { role: 'model', parts: [{ text: result.response.text() }] },
+      ];
+      return result;
+    },
+  };
 }
 
 export const plannerModel = {
   get(systemInstruction?: string) {
-    return resolveModel('planner', systemInstruction);
+    return buildModel('planner', systemInstruction);
   },
 };
 
 export const narrativeModel = {
   get(systemInstruction?: string) {
-    return resolveModel('narrative', systemInstruction);
+    return buildModel('narrative', systemInstruction);
   },
   startChat(systemInstruction: string, history: Content[]) {
-    return resolveModel('narrative', systemInstruction).startChat({ history });
+    return startChatInternal('narrative', systemInstruction, history);
   },
 };
 
@@ -101,9 +165,7 @@ export function createGeminiModel(
   if (model === 'NARRATIVE') {
     return narrativeModel.get(systemInstruction);
   }
-
-  return getGenAI().getGenerativeModel({
-    model: GEMINI_MODELS[model],
-    systemInstruction,
-  });
+  throw new Error(
+    `createGeminiModel: model "${model}" must be invoked via the dedicated edge function (e.g. generate-embedding for EMBEDDING)`,
+  );
 }

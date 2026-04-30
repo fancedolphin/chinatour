@@ -5,7 +5,10 @@ import { GuidedQuestionPage } from './GuidedQuestionPage';
 import { ExistingPlanPage } from './ExistingPlanPage';
 import { EmergencyAssistantCard } from './EmergencyAssistantCard';
 import { AIPlannerChatPage } from './AIPlannerChatPage';
+import type { TripMapPreviewPayload } from './TripMapPage';
 import { tripService, type TripDetail } from '@/services/tripService';
+import { useT } from '@/i18n/useT';
+import i18n from '@/i18n';
 
 function buildResumePrompt(trip: TripDetail): string {
   const days = [...trip.trip_itineraries]
@@ -15,20 +18,42 @@ function buildResumePrompt(trip: TripDetail): string {
         .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
         .map(a => `  ${a.time ?? ''} ${a.name}：${a.description ?? ''}`)
         .join('\n');
-      return `第${it.day_number}天（${it.theme ?? ''}）\n${acts}`;
+      const header = i18n.t('planInput.resumeDayHeader', { day: it.day_number, theme: it.theme ?? '' });
+      return `${header}\n${acts}`;
     })
     .join('\n\n');
-  return `以下是我已保存的行程，请基于此继续为我规划和优化：\n\n目的地：${trip.destination}\n日期：${trip.start_date} 至 ${trip.end_date}\n预算：${trip.budget ?? '未设置'}\n\n${days}\n\n请确认收到行程内容，并生成完整的行程JSON，随时为我调整优化。`;
+  return i18n.t('planInput.resumePrompt', {
+    destination: trip.destination,
+    startDate: trip.start_date,
+    endDate: trip.end_date,
+    budget: trip.budget ?? i18n.t('planInput.resumeNoBudget'),
+    days,
+  });
 }
 
 interface PlanInputPageProps {
   onNavigateToTrips?: () => void;
   resumeTripId?: string;
   onClearResume?: () => void;
-  onOpenMap?: (tripId: string) => void;
+  onOpenMap?: (payload: string | TripMapPreviewPayload) => void;
 }
 
+type AppEntry = { name: string; description: string; steps: string[] };
+
+const TRANSPORT_VISUALS = [
+  { icon: '🚄', color: 'from-blue-500 to-blue-600' },
+  { icon: '✈️', color: 'from-orange-500 to-orange-600' },
+  { icon: '🗺️', color: 'from-green-500 to-green-600' },
+];
+const LIFE_VISUALS = [
+  { icon: '🛏️', color: 'from-yellow-500 to-yellow-600' },
+  { icon: '💳', color: 'from-blue-400 to-blue-500' },
+  { icon: '💬', color: 'from-green-500 to-green-600' },
+];
+const TRANSLATE_VISUALS = [{ icon: '🔤', color: 'from-blue-500 to-purple-500' }];
+
 export function PlanInputPage({ onNavigateToTrips, resumeTripId, onClearResume, onOpenMap }: PlanInputPageProps = {}) {
+  const { t } = useT();
   const [selectedMode, setSelectedMode] = useState<'new' | 'existing' | null>(null);
   const [resumeInitialPlan, setResumeInitialPlan] = useState<string | null>(null);
   const [resumeLoading, setResumeLoading] = useState(false);
@@ -45,7 +70,7 @@ export function PlanInputPage({ onNavigateToTrips, resumeTripId, onClearResume, 
         if (!cancelled) setResumeInitialPlan(buildResumePrompt(trip));
       })
       .catch(err => {
-        console.error('[PlanInputPage] 加载行程失败:', err);
+        console.error('[PlanInputPage] failed to load trip:', err);
         if (!cancelled) onClearResume?.();
       })
       .finally(() => {
@@ -60,7 +85,7 @@ export function PlanInputPage({ onNavigateToTrips, resumeTripId, onClearResume, 
         <div className="min-h-screen bg-gray-50 flex items-center justify-center">
           <div className="text-center">
             <Loader2 className="w-12 h-12 text-red-500 mx-auto mb-4 animate-spin" />
-            <p className="text-gray-600">加载行程中...</p>
+            <p className="text-gray-600">{t('planInput.loadingTrip')}</p>
           </div>
         </div>
       );
@@ -89,6 +114,12 @@ export function PlanInputPage({ onNavigateToTrips, resumeTripId, onClearResume, 
     return <ExistingPlanPage onBack={() => setSelectedMode(null)} onSaveSuccess={onNavigateToTrips} onOpenMap={onOpenMap} />;
   }
 
+  const tips = t('planInput.tips', { returnObjects: true }) as string[];
+  const usage = t('planInput.appsUsage', { returnObjects: true }) as string[];
+  const transportApps = t('planInput.transportApps', { returnObjects: true }) as AppEntry[];
+  const lifeApps = t('planInput.lifeApps', { returnObjects: true }) as AppEntry[];
+  const translateApps = t('planInput.translateApps', { returnObjects: true }) as AppEntry[];
+
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
       <div className="max-w-screen-xl mx-auto px-4 py-6">
@@ -100,12 +131,8 @@ export function PlanInputPage({ onNavigateToTrips, resumeTripId, onClearResume, 
             className="w-full h-full object-cover"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent flex flex-col justify-end p-6">
-            <h2 className="text-white mb-2">
-              开启你的旅程
-            </h2>
-            <p className="text-white/90 text-sm">
-              AI 智能规划，为你量身定制完美行程
-            </p>
+            <h2 className="text-white mb-2">{t('planInput.heroTitle')}</h2>
+            <p className="text-white/90 text-sm">{t('planInput.heroSubtitle')}</p>
           </div>
         </div>
 
@@ -121,22 +148,14 @@ export function PlanInputPage({ onNavigateToTrips, resumeTripId, onClearResume, 
               </div>
               <div className="flex-1 text-left">
                 <h3 className="text-gray-900 mb-1 flex items-center gap-2">
-                  从零开始规划
+                  {t('planInput.modeNew')}
                   <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-red-500 transition-colors" />
                 </h3>
-                <p className="text-sm text-gray-600">
-                  还没有计划？让我们通过几个简单问题，为你打造专属行程
-                </p>
+                <p className="text-sm text-gray-600">{t('planInput.modeNewDesc')}</p>
                 <div className="flex flex-wrap gap-2 mt-3">
-                  <span className="px-2 py-1 bg-red-50 text-red-600 rounded text-xs">
-                    智能推荐
-                  </span>
-                  <span className="px-2 py-1 bg-red-50 text-red-600 rounded text-xs">
-                    预算优化
-                  </span>
-                  <span className="px-2 py-1 bg-red-50 text-red-600 rounded text-xs">
-                    风格定制
-                  </span>
+                  <span className="px-2 py-1 bg-red-50 text-red-600 rounded text-xs">{t('planInput.modeNewTagSmart')}</span>
+                  <span className="px-2 py-1 bg-red-50 text-red-600 rounded text-xs">{t('planInput.modeNewTagBudget')}</span>
+                  <span className="px-2 py-1 bg-red-50 text-red-600 rounded text-xs">{t('planInput.modeNewTagStyle')}</span>
                 </div>
               </div>
             </div>
@@ -152,22 +171,14 @@ export function PlanInputPage({ onNavigateToTrips, resumeTripId, onClearResume, 
               </div>
               <div className="flex-1 text-left">
                 <h3 className="text-gray-900 mb-1 flex items-center gap-2">
-                  已有初步计划
+                  {t('planInput.modeExisting')}
                   <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-blue-500 transition-colors" />
                 </h3>
-                <p className="text-sm text-gray-600">
-                  已经有目的地和日程？上传你的计划，我们帮你完善细节
-                </p>
+                <p className="text-sm text-gray-600">{t('planInput.modeExistingDesc')}</p>
                 <div className="flex flex-wrap gap-2 mt-3">
-                  <span className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs">
-                    餐厅推荐
-                  </span>
-                  <span className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs">
-                    备选方案
-                  </span>
-                  <span className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs">
-                    优化路线
-                  </span>
+                  <span className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs">{t('planInput.modeExistingTagDining')}</span>
+                  <span className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs">{t('planInput.modeExistingTagAlt')}</span>
+                  <span className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs">{t('planInput.modeExistingTagRoute')}</span>
                 </div>
               </div>
             </div>
@@ -176,11 +187,9 @@ export function PlanInputPage({ onNavigateToTrips, resumeTripId, onClearResume, 
 
         {/* Quick Tips */}
         <div className="mt-6 bg-gradient-to-r from-orange-50 to-yellow-50 rounded-xl p-4">
-          <h3 className="text-gray-900 mb-2 text-sm">💡 小贴士</h3>
+          <h3 className="text-gray-900 mb-2 text-sm">{t('planInput.tipsTitle')}</h3>
           <ul className="text-xs text-gray-600 space-y-1">
-            <li>• 支持模糊输入，如"十一假期"、"下月中旬"</li>
-            <li>• 可设置预算、风格偏好、饮食禁忌等个性化需求</li>
-            <li>• AI 会根据天气、节假日等因素优化建议</li>
+            {tips.map((tip, i) => <li key={i}>• {tip}</li>)}
           </ul>
         </div>
 
@@ -191,157 +200,77 @@ export function PlanInputPage({ onNavigateToTrips, resumeTripId, onClearResume, 
 
         {/* Travel Apps Recommendations */}
         <div className="mt-6">
-          <h3 className="text-gray-900 mb-4">🧳 行前指引 - 推荐App</h3>
-          
-          {/* Transportation Apps */}
-          <div className="bg-white rounded-xl p-4 mb-3">
-            <h4 className="text-gray-900 mb-3 flex items-center gap-2">
-              <span className="text-lg">🚄</span>
-              <span className="text-sm">出行交通</span>
-            </h4>
-            <div className="space-y-3">
-              <AppRecommendCardWithSteps
-                name="12306"
-                description="火车票官方购票平台"
-                icon="🚄"
-                color="from-blue-500 to-blue-600"
-                steps={[
-                  '下载"铁路12306"官方App或访问www.12306.cn',
-                  '点击"注册"，输入手机号获取验证码',
-                  '填写真实姓名和身份证号（需与乘车人一致）',
-                  '设置登录密码和支付密码',
-                  '完成人脸识别认证（首次购票必须）',
-                  '添加常用联系人信息，方便快速购票'
-                ]}
-              />
-              <AppRecommendCardWithSteps
-                name="携程旅行"
-                description="机票酒店火车票一站式预订"
-                icon="✈️"
-                color="from-orange-500 to-orange-600"
-                steps={[
-                  '下载"携程旅行"App或访问ctrip.com',
-                  '点击"注册"，使用手机号注册',
-                  '输入手机验证码完成注册',
-                  '绑定邮箱（可选，便于接收订单信息）',
-                  '添加常用乘客信息（姓名、证件号）',
-                  '绑定支付方式（支付宝/微信/银行卡）',
-                  '完成实名认证，享受更多优惠'
-                ]}
-              />
-              <AppRecommendCardWithSteps
-                name="高德地图"
-                description="精准导航和路线规划"
-                icon="🗺️"
-                color="from-green-500 to-green-600"
-                steps={[
-                  '下载"高德地图"App',
-                  '打开App，点击右下角"我的"',
-                  '点击"登录/注册"，选择手机号登录',
-                  '输入手机号和验证码',
-                  '完善个人信息（可选）',
-                  '开启定位权限，以便使用导航功能',
-                  '下载离线地图，节省流量（设置→离线地图）'
-                ]}
-              />
-            </div>
-          </div>
+          <h3 className="text-gray-900 mb-4">{t('planInput.appsTitle')}</h3>
 
-          {/* Life Service Apps */}
-          <div className="bg-white rounded-xl p-4 mb-3">
-            <h4 className="text-gray-900 mb-3 flex items-center gap-2">
-              <span className="text-lg">🍔</span>
-              <span className="text-sm">生活服务</span>
-            </h4>
-            <div className="space-y-3">
-              <AppRecommendCardWithSteps
-                name="美团"
-                description="外卖、酒店、景点门票团购"
-                icon="🛏️"
-                color="from-yellow-500 to-yellow-600"
-                steps={[
-                  '下载"美团"App',
-                  '点击"我的"→"登录/注册"',
-                  '使用手机号注册，输入验证码',
-                  '完善个人信息（昵称、头像可选）',
-                  '绑定支付方式（美团支付/支付宝/微信）',
-                  '添加收货地址（外卖配送用）',
-                  '开启定位权限，查看附近商家和优惠'
-                ]}
-              />
-              <AppRecommendCardWithSteps
-                name="支付宝"
-                description="移动支付必备工具"
-                icon="💳"
-                color="from-blue-400 to-blue-500"
-                steps={[
-                  '下载"支付宝"App或访问alipay.com',
-                  '点击"注册"，输入手机号',
-                  '设置登录密码和支付密码（必须不同）',
-                  '完成实名认证（上传身份证照片）',
-                  '人脸识别认证（扫脸验证）',
-                  '绑定银行卡（用于充值和提现）',
-                  '设置指纹/面容支付（可选，更便捷安全）'
-                ]}
-              />
-              <AppRecommendCardWithSteps
-                name="微信"
-                description="社交聊天和移动支付"
-                icon="💬"
-                color="from-green-500 to-green-600"
-                steps={[
-                  '下载"微信"App',
-                  '点击"注册"，输入手机号',
-                  '设置微信号和登录密码',
-                  '上传头像，设置昵称',
-                  '开通微信支付：我→支付→实名认证',
-                  '绑定银行卡（用于充值和转账）',
-                  '设置支付密码（必须6位数字）',
-                  '开启指纹/面容支付（设置→支付设置）'
-                ]}
-              />
-            </div>
-          </div>
-
-          {/* Translation App */}
-          <div className="bg-white rounded-xl p-4 mb-3">
-            <h4 className="text-gray-900 mb-3 flex items-center gap-2">
-              <span className="text-lg">🌐</span>
-              <span className="text-sm">语言翻译</span>
-            </h4>
-            <div className="space-y-3">
-              <AppRecommendCardWithSteps
-                name="Google Translate"
-                description="多语言实时翻译工具"
-                icon="🔤"
-                color="from-blue-500 to-purple-500"
-                steps={[
-                  '下载"Google Translate"App（需要访问Google Play或App Store）',
-                  '打开App，无需注册即可使用基本功能',
-                  '登录Google账号（可选，同步翻译历史）',
-                  '下载离线语言包（设置→离线翻译）',
-                  '建议下载：中文、英文离线包',
-                  '允许相机权限（用于拍照翻译功能）',
-                  '允许麦克风权限（用于语音翻译）',
-                  '在中国大陆使用需科学上网，或使用网页版translate.google.cn'
-                ]}
-              />
-            </div>
-          </div>
+          <AppCategoryBlock
+            icon="🚄"
+            title={t('planInput.appsTransportTitle')}
+            apps={transportApps}
+            visuals={TRANSPORT_VISUALS}
+            stepsTitle={t('planInput.appsStepsTitle')}
+          />
+          <AppCategoryBlock
+            icon="🍔"
+            title={t('planInput.appsLifeTitle')}
+            apps={lifeApps}
+            visuals={LIFE_VISUALS}
+            stepsTitle={t('planInput.appsStepsTitle')}
+          />
+          <AppCategoryBlock
+            icon="🌐"
+            title={t('planInput.appsTranslateTitle')}
+            apps={translateApps}
+            visuals={TRANSLATE_VISUALS}
+            stepsTitle={t('planInput.appsStepsTitle')}
+          />
         </div>
 
         {/* App Usage Tips */}
         <div className="mt-3 bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl p-4 mb-6">
-          <h4 className="text-gray-900 mb-2 text-sm">📱 App使用建议</h4>
+          <h4 className="text-gray-900 mb-2 text-sm">{t('planInput.appsUsageTitle')}</h4>
           <ul className="text-xs text-gray-600 space-y-1">
-            <li>• 所有App注册都需要<span className="text-blue-600">中国手机号</span>，建议抵达后购买电话卡</li>
-            <li>• 实名认证通常需要<span className="text-blue-600">中国身份证</span>，外国游客可用护照</li>
-            <li>• 高德地图离线地图功能可节省大量流量</li>
-            <li>• 支付宝可绑定国际信用卡，微信支付更复杂</li>
-            <li>• Google Translate在中国需要VPN，建议提前下载离线语言包</li>
-            <li>• 收藏常用地点和路线，提高出行效率</li>
+            {usage.map((item, i) => <li key={i}>• {item}</li>)}
           </ul>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function AppCategoryBlock({
+  icon,
+  title,
+  apps,
+  visuals,
+  stepsTitle,
+}: {
+  icon: string;
+  title: string;
+  apps: AppEntry[];
+  visuals: Array<{ icon: string; color: string }>;
+  stepsTitle: string;
+}) {
+  return (
+    <div className="bg-white rounded-xl p-4 mb-3">
+      <h4 className="text-gray-900 mb-3 flex items-center gap-2">
+        <span className="text-lg">{icon}</span>
+        <span className="text-sm">{title}</span>
+      </h4>
+      <div className="space-y-3">
+        {apps.map((app, i) => {
+          const v = visuals[i] || visuals[visuals.length - 1];
+          return (
+            <AppRecommendCardWithSteps
+              key={app.name}
+              name={app.name}
+              description={app.description}
+              icon={v.icon}
+              color={v.color}
+              steps={app.steps}
+              stepsTitle={stepsTitle}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -353,9 +282,10 @@ interface AppRecommendCardWithStepsProps {
   icon: string;
   color: string;
   steps: string[];
+  stepsTitle: string;
 }
 
-function AppRecommendCardWithSteps({ name, description, icon, color, steps }: AppRecommendCardWithStepsProps) {
+function AppRecommendCardWithSteps({ name, description, icon, color, steps, stepsTitle }: AppRecommendCardWithStepsProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   return (
@@ -373,14 +303,14 @@ function AppRecommendCardWithSteps({ name, description, icon, color, steps }: Ap
             <p className="text-xs text-gray-500">{description}</p>
           </div>
         </div>
-        <ChevronDown 
+        <ChevronDown
           className={`w-5 h-5 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
         />
       </button>
-      
+
       {isExpanded && (
         <div className="bg-white p-4 border-t border-gray-200">
-          <p className="text-xs text-gray-900 mb-2">📝 注册步骤：</p>
+          <p className="text-xs text-gray-900 mb-2">{stepsTitle}</p>
           <ol className="space-y-2">
             {steps.map((step, index) => (
               <li key={index} className="flex gap-2 text-xs text-gray-600">

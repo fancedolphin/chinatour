@@ -1,5 +1,6 @@
 import type { DishItem, RestaurantDetail } from '@/components/RestaurantDetailCard';
 import { supabase } from '@/utils/supabase/client';
+import i18n from '@/i18n';
 
 type RestaurantRow = {
   id: string;
@@ -49,7 +50,7 @@ function parseHours(value: unknown): string {
     }
   }
 
-  return '营业时间未提供';
+  return i18n.t('tripDetail.fallbackHours');
 }
 
 function expandDishCandidates(values: string[]): string[] {
@@ -99,10 +100,10 @@ function mapRestaurantDetail(row: RestaurantRow): RestaurantDetail {
   return {
     name: row.name,
     nameEn: row.name_en?.trim() || row.name,
-    address: row.address?.trim() || '地址未提供',
+    address: row.address?.trim() || i18n.t('tripDetail.fallbackAddress'),
     hours: parseHours(row.opening_hours),
-    cuisine: row.cuisine_type?.trim() || '精选美食',
-    priceRange: row.price_range?.trim() || '价格未提供',
+    cuisine: row.cuisine_type?.trim() || i18n.t('tripDetail.fallbackCuisine'),
+    priceRange: row.price_range?.trim() || i18n.t('tripDetail.fallbackPriceRange'),
     signature,
     menuImage: row.menu_image_url?.trim() || dishesFromRows.find((dish) => dish.image)?.image,
   };

@@ -9,6 +9,7 @@
 | intent_match_rate | 1.00 | 0.90 | n/a |
 | core_attractions_recall@8 | 1.00 | 0.90 | 0.85 |
 | food_recall@5 | 1.00 | 0.80 | 0.75 |
+| restaurant_proximity_coverage | 0.97 | 1.00 | 0.80 |
 | itinerary_executable_rate | 0.97 | 0.94 | 0.90 |
 | constraint_hit_rate | 1.00 | 0.96 | 0.95 |
 | llm_generated_ratio | 0.00 | 0.05 | <= 0.20 |

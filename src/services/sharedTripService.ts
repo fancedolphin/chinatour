@@ -6,6 +6,7 @@
 
 import { supabase } from '@/utils/supabase/client';
 import type { Tables, TablesInsert } from '@/types/database';
+import i18n from '@/i18n';
 
 export type SharedTrip = Tables<'shared_trips'>;
 export type UserInteraction = Tables<'user_interactions'>;
@@ -79,7 +80,7 @@ export function mapSharedTripCard(row: any): SharedTripCard {
   return {
     id: row.id,
     tripId: row.trip_id,
-    destination: row.trips?.destination ?? row.title ?? '未命名行程',
+    destination: row.trips?.destination ?? row.title ?? i18n.t('shared.untitledTrip'),
     startDate: row.trips?.start_date ?? '',
     endDate: row.trips?.end_date ?? '',
     duration: row.trips?.duration ?? null,
@@ -95,7 +96,7 @@ export function mapSharedTripCard(row: any): SharedTripCard {
     sharedAt: row.shared_at ?? '',
     author: {
       id: row.users?.id ?? row.user_id,
-      name: row.users?.display_name ?? row.users?.username ?? '用户',
+      name: row.users?.display_name ?? row.users?.username ?? i18n.t('shared.anonymousUser'),
       avatar: row.users?.avatar_url ?? null,
     },
   };

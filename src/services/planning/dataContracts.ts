@@ -116,6 +116,23 @@ export const bookingTipSchema = z.object({
 });
 export type BookingTip = z.infer<typeof bookingTipSchema>;
 
+export const mealRecommendationSchema = z.object({
+  placeId: z.string().min(1).optional(),
+  name: z.string().min(1),
+  description: z.string().min(1),
+  source: sourceTypeSchema,
+  confidence: z.number().min(0).max(1),
+  location: placeLocationSchema.optional(),
+  price: z.string().optional(),
+  candidateId: z.string().min(1).optional(),
+  anchorActivityId: z.string().min(1).optional(),
+  anchorAttractionName: z.string().optional(),
+  anchorActivityTime: z.string().optional(),
+  proximityMeters: z.number().min(0).optional(),
+  fallbackUsed: z.boolean().optional(),
+});
+export type MealRecommendation = z.infer<typeof mealRecommendationSchema>;
+
 export const ragRetrievalResultSchema = z.object({
   slots: ragSlotMapSchema,
   unsatisfiedSlots: z.array(slotNameSchema),
@@ -128,14 +145,18 @@ export const ragRetrievalResultSchema = z.object({
 export type RagRetrievalResult = z.infer<typeof ragRetrievalResultSchema>;
 
 export const plannedActivitySchema = z.object({
+  id: z.string().min(1).optional(),
   time: z.string().min(1),
   name: z.string().min(1),
   description: z.string().min(1),
-  type: z.enum(['attraction', 'transport', 'rest']),
+  type: z.enum(['attraction', 'transport', 'rest', 'meal']),
   source: sourceTypeSchema,
   confidence: z.number().min(0).max(1),
   location: placeLocationSchema.optional(),
   indoorOutdoor: indoorOutdoorSchema.optional(),
+  mealType: z.enum(['breakfast', 'lunch', 'dinner']).optional(),
+  anchorActivityId: z.string().min(1).optional(),
+  candidateId: z.string().min(1).optional(),
 });
 export type PlannedActivity = z.infer<typeof plannedActivitySchema>;
 
@@ -148,6 +169,13 @@ export const dayPlanSchema = z.object({
     lunch: z.string().optional(),
     dinner: z.string().optional(),
   }),
+  mealDetails: z
+    .object({
+      breakfast: mealRecommendationSchema.optional(),
+      lunch: mealRecommendationSchema.optional(),
+      dinner: mealRecommendationSchema.optional(),
+    })
+    .optional(),
   alternativePlan: z.string().optional(),
 });
 export type DayPlan = z.infer<typeof dayPlanSchema>;
@@ -162,7 +190,16 @@ export const structuredItinerarySchema = z.object({
 export type StructuredItinerary = z.infer<typeof structuredItinerarySchema>;
 
 export const validationWarningSchema = z.object({
-  rule: z.enum(['daily_overload', 'geographic_conflict', 'booking_constraint', 'time_of_day']),
+  rule: z.enum([
+    'daily_overload',
+    'geographic_conflict',
+    'booking_constraint',
+    'time_of_day',
+    'restaurant_proximity',
+    'restaurant_missing',
+    'restaurant_proximity_missing',
+    'daily_attraction_missing',
+  ]),
   day: z.number().int().min(1),
   severity: z.enum(['warning']),
   message: z.string().min(1),
@@ -172,6 +209,15 @@ export type ValidationWarning = z.infer<typeof validationWarningSchema>;
 export const validationResultSchema = z.object({
   can_generate: z.boolean(),
   warnings: z.array(validationWarningSchema),
+  coverage: z.object({
+    restaurantProximityCoverage: z.number().min(0).max(1),
+    dailyAttractionCompleteness: z.number().min(0).max(1),
+    restaurantAvgDistanceMeters: z.number().min(0).nullable(),
+  }).default({
+    restaurantProximityCoverage: 0,
+    dailyAttractionCompleteness: 0,
+    restaurantAvgDistanceMeters: null,
+  }),
 });
 export type ValidationResult = z.infer<typeof validationResultSchema>;
 
@@ -188,17 +234,19 @@ export const tripPlanningResponseSchema = z.object({
   intent: planningIntentSchema,
   tripPlan: structuredItinerarySchema,
   validation: validationResultSchema,
-  diagnostics: z.object({
-    unsatisfiedSlots: z.array(slotNameSchema),
-    amapCalls: z.number().int().min(0),
-    stageTimings: z.object({
-      embedding: z.number().min(0),
-      rag_retrieve: z.number().min(0),
-      amap_fallback: z.number().min(0),
-      planner: z.number().min(0),
-      validator: z.number().min(0),
-      total: z.number().min(0),
-    }),
+    diagnostics: z.object({
+      unsatisfiedSlots: z.array(slotNameSchema),
+      amapCalls: z.number().int().min(0),
+      stageTimings: z.object({
+        embedding: z.number().min(0),
+        attraction_retrieval: z.number().min(0),
+        restaurant_proximity: z.number().min(0),
+        restaurant_fallback: z.number().min(0),
+        amap_fallback: z.number().min(0),
+        planner: z.number().min(0),
+        validator: z.number().min(0),
+        total: z.number().min(0),
+      }),
   }),
 });
 export type TripPlanningResponse = z.infer<typeof tripPlanningResponseSchema>;
@@ -227,6 +275,9 @@ export const STRUCTURED_ITINERARY_RESPONSE_SCHEMA = {
                 type: { type: 'STRING' },
                 source: { type: 'STRING' },
                 confidence: { type: 'NUMBER' },
+                mealType: { type: 'STRING' },
+                anchorActivityId: { type: 'STRING' },
+                candidateId: { type: 'STRING' },
               },
               required: ['time', 'name', 'description', 'type', 'source', 'confidence'],
             },
@@ -237,6 +288,14 @@ export const STRUCTURED_ITINERARY_RESPONSE_SCHEMA = {
               breakfast: { type: 'STRING' },
               lunch: { type: 'STRING' },
               dinner: { type: 'STRING' },
+            },
+          },
+          mealDetails: {
+            type: 'OBJECT',
+            properties: {
+              breakfast: { type: 'OBJECT' },
+              lunch: { type: 'OBJECT' },
+              dinner: { type: 'OBJECT' },
             },
           },
           alternativePlan: { type: 'STRING' },

@@ -34,3 +34,10 @@ build
 .cache
 __pycache__/
 *.pyc
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+tests/playwright/.auth/

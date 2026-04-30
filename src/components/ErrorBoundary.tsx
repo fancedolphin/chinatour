@@ -7,6 +7,7 @@
 
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { handleError } from '@/utils/errorHandler';
+import i18n from '@/i18n';
 
 /**
  * ErrorBoundary 组件的属性。
@@ -58,13 +59,14 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
  * 默认的错误降级 UI，提供刷新入口与开发态的错误详情。
  */
 function DefaultErrorFallback({ error }: { error?: Error }): JSX.Element {
+  const t = (key: string) => i18n.t(key);
   return (
     <div style={{ padding: '2rem', textAlign: 'center' }}>
-      <h2>出错了</h2>
-      <p>应用遇到了一个错误，请刷新页面重试</p>
+      <h2>{t('errorBoundary.title')}</h2>
+      <p>{t('errorBoundary.message')}</p>
       {process.env.NODE_ENV === 'development' && error && (
         <details style={{ marginTop: '1rem', textAlign: 'left' }}>
-          <summary>错误详情（仅开发环境）</summary>
+          <summary>{t('errorBoundary.details')}</summary>
           <pre style={{ overflow: 'auto' }}>{error.stack}</pre>
         </details>
       )}
@@ -72,7 +74,7 @@ function DefaultErrorFallback({ error }: { error?: Error }): JSX.Element {
         onClick={() => window.location.reload()}
         style={{ marginTop: '1rem', padding: '0.5rem 1rem' }}
       >
-        刷新页面
+        {t('errorBoundary.refresh')}
       </button>
     </div>
   );

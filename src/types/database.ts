@@ -1062,6 +1062,7 @@ export type Database = {
       match_attractions: {
         Args: {
           destination_filter?: string
+          locale_filter?: string
           match_count?: number
           match_threshold?: number
           query_embedding: string
@@ -1081,6 +1082,7 @@ export type Database = {
       match_restaurants: {
         Args: {
           destination_filter?: string
+          locale_filter?: string
           match_count?: number
           match_threshold?: number
           query_embedding: string
@@ -1100,6 +1102,7 @@ export type Database = {
       match_travel_tips: {
         Args: {
           destination_filter?: string
+          locale_filter?: string
           match_count?: number
           match_threshold?: number
           query_embedding: string
@@ -1115,6 +1118,7 @@ export type Database = {
       }
       match_trip_examples: {
         Args: {
+          locale_filter?: string
           match_count?: number
           match_threshold?: number
           query_embedding: string

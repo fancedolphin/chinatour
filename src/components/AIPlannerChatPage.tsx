@@ -1,13 +1,14 @@
-import { ChevronLeft, Sparkles, Send, Calendar, MapPin, Clock, DollarSign, ChevronDown, ChevronUp, Loader2, CloudRain } from 'lucide-react';
+import { ChevronLeft, Sparkles, Send, Calendar, MapPin, Clock, DollarSign, ChevronDown, ChevronUp, Loader2, CloudRain, Camera, Utensils, Train, Home } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
-import { Separator } from './ui/separator';
+import { Card } from './ui/card';
 import { RestaurantDetailCard, type RestaurantDetail } from './RestaurantDetailCard';
 import { TransportDetailCard } from './TransportDetailCard';
 import { AttractionDetailCard } from './AttractionDetailCard';
+import type { TripMapPreviewPayload } from './TripMapPage';
 import { getMockTransportData, getMockAttractionData } from './mock-data';
 import { useAuthContext } from '@/presentation/context/AuthContext';
 import { restaurantDetailService } from '@/services/restaurantDetailService';
@@ -15,7 +16,14 @@ import { tripService } from '@/services/tripService';
 import { transformTripPlanWithEnhancement, type TripPlan as PersistedTripPlan } from '@/utils/tripDataTransformer';
 import { toast } from 'sonner';
 import { tripPlanningService } from '@/services/planning/tripPlanningService';
-import type { PlanningIntent, SourceType, StructuredItinerary } from '@/services/planning/contracts';
+import { useT } from '@/i18n/useT';
+import type {
+  MealRecommendation,
+  PlanningIntent,
+  SourceType,
+  StructuredItinerary,
+  TripPlanningResponse,
+} from '@/services/planning/contracts';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -39,6 +47,11 @@ interface DayPlan {
     lunch?: string;
     dinner?: string;
   };
+  mealDetails?: {
+    breakfast?: MealRecommendation;
+    lunch?: MealRecommendation;
+    dinner?: MealRecommendation;
+  };
   alternativePlan?: string;
 }
 
@@ -46,7 +59,7 @@ interface Activity {
   time: string;
   name: string;
   description: string;
-  type: 'attraction' | 'transport' | 'rest';
+  type: 'attraction' | 'transport' | 'rest' | 'meal';
   source?: SourceType;
   confidence?: number;
   location?: {
@@ -55,13 +68,153 @@ interface Activity {
     address?: string;
   };
   indoorOutdoor?: 'indoor' | 'outdoor' | 'both';
+  mealType?: MealSlot;
+  anchorActivityId?: string;
+  candidateId?: string;
 }
+
+type MealSlot = 'breakfast' | 'lunch' | 'dinner';
+
+type TimelineItem =
+  | (Activity & {
+      sourceOrder: number;
+      raw?: undefined;
+    })
+  | {
+      time: string;
+      name: string;
+      description: string;
+      type: 'meal';
+      mealType: MealSlot;
+      raw: string;
+      sourceOrder: number;
+    };
 
 interface AIPlannerChatPageProps {
   onBack: () => void;
   initialPlan?: string;
   onSaveSuccess?: () => void;
-  onOpenMap?: (tripId: string) => void;
+  onOpenMap?: (payload: string | TripMapPreviewPayload) => void;
+}
+
+function buildTimelineItems(day: DayPlan): TimelineItem[] {
+  const mealEntries: TimelineItem[] = [];
+  const activityCount = day.activities.length;
+  const hasPlannerMealActivities = day.activities.some((activity) => activity.type === 'meal');
+  if (!hasPlannerMealActivities) {
+    if (day.meals.breakfast) mealEntries.push({ time: '08:00', name: day.meals.breakfast.split(' - ')[0], description: day.meals.breakfast, type: 'meal', mealType: 'breakfast', raw: day.meals.breakfast, sourceOrder: activityCount + mealEntries.length });
+    if (day.meals.lunch) mealEntries.push({ time: '12:00', name: day.meals.lunch.split(' - ')[0], description: day.meals.lunch, type: 'meal', mealType: 'lunch', raw: day.meals.lunch, sourceOrder: activityCount + mealEntries.length });
+    if (day.meals.dinner) mealEntries.push({ time: '19:00', name: day.meals.dinner.split(' - ')[0], description: day.meals.dinner, type: 'meal', mealType: 'dinner', raw: day.meals.dinner, sourceOrder: activityCount + mealEntries.length });
+  }
+
+  return [
+    ...day.activities.map((activity, index) => ({ ...activity, sourceOrder: index })),
+    ...mealEntries,
+  ].sort((a, b) => {
+    const timeComparison = a.time.localeCompare(b.time);
+    if (timeComparison !== 0) {
+      return timeComparison;
+    }
+
+    const mealBeforeNonActivity =
+      a.type === 'meal' && (b.type === 'transport' || b.type === 'rest');
+    const nonActivityAfterMeal =
+      b.type === 'meal' && (a.type === 'transport' || a.type === 'rest');
+
+    if (mealBeforeNonActivity) {
+      return -1;
+    }
+
+    if (nonActivityAfterMeal) {
+      return 1;
+    }
+
+    return a.sourceOrder - b.sourceOrder;
+  });
+}
+
+function extractCity(destination: string): string {
+  const parts = destination
+    .split(/·|,|，|\/|\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return parts[0] || destination;
+}
+
+function buildPreviewMapPayload(plan: TripPlan): TripMapPreviewPayload {
+  const city = extractCity(plan.destination);
+  const itineraries = plan.days.map((day) => {
+    const previewActivities = buildTimelineItems(day)
+      .map((item, index) => {
+        const location = item.type === 'meal'
+          ? item.location ?? (item.mealType ? day.mealDetails?.[item.mealType]?.location : undefined)
+          : item.location;
+
+        if (!location || !Number.isFinite(location.lat) || !Number.isFinite(location.lng)) {
+          return null;
+        }
+
+        if (item.type === 'transport') {
+          return null;
+        }
+
+        return {
+          id: `preview-activity-${day.day}-${index}`,
+          name: item.name,
+          location_lat: location.lat,
+          location_lng: location.lng,
+          order_index: index + 1,
+          address: location.address ?? '',
+          type: item.type === 'meal'
+            ? 'restaurant'
+            : item.type === 'attraction'
+              ? 'attraction'
+              : 'hotel',
+        };
+      })
+      .filter((activity): activity is NonNullable<typeof activity> => Boolean(activity));
+
+    return {
+      id: `preview-itinerary-${day.day}`,
+      day_number: day.day,
+      theme: day.theme,
+      activities: previewActivities.map(({ id, name, location_lat, location_lng, order_index }) => ({
+        id,
+        name,
+        location_lat,
+        location_lng,
+        order_index,
+      })),
+      mapLocations: previewActivities.map(({ id, name, location_lat, location_lng, order_index, address, type }) => ({
+        id: `preview-location-${day.day}-${order_index}`,
+        name,
+        city,
+        district: '',
+        address,
+        lat: location_lat,
+        lng: location_lng,
+        type,
+        order: day.day * 100 + order_index,
+        articles: [],
+        videos: [],
+      })),
+    };
+  });
+
+  return {
+    trip: {
+      id: 'preview-trip',
+      destination: plan.destination,
+      trip_itineraries: itineraries.map(({ id, day_number, theme, activities }) => ({
+        id,
+        day_number,
+        theme,
+        activities,
+      })),
+    },
+    locations: itineraries.flatMap((itinerary) => itinerary.mapLocations),
+  };
 }
 
 function buildPersistedPlan(plan: TripPlan): PersistedTripPlan {
@@ -70,23 +223,33 @@ function buildPersistedPlan(plan: TripPlan): PersistedTripPlan {
     dates: plan.dates,
     budget: plan.budget,
     days: plan.days.map((day) => {
-      const mealActivities = [
-        { slot: '早餐', info: day.meals.breakfast, time: '08:00' },
-        { slot: '午餐', info: day.meals.lunch, time: '12:00' },
-        { slot: '晚餐', info: day.meals.dinner, time: '19:00' },
-      ]
-        .filter((meal) => meal.info)
-        .map((meal) => {
-          const [name, ...descriptionParts] = meal.info!.split(' - ');
-          const description = descriptionParts.join(' - ').trim();
+      const hasPlannerMealActivities = day.activities.some((activity) => activity.type === 'meal');
+      const mealActivities = hasPlannerMealActivities
+        ? []
+        : [
+            { slot: 'breakfast' as const, info: day.meals.breakfast, detail: day.mealDetails?.breakfast, time: '08:00' },
+            { slot: 'lunch' as const, info: day.meals.lunch, detail: day.mealDetails?.lunch, time: '12:00' },
+            { slot: 'dinner' as const, info: day.meals.dinner, detail: day.meals.dinner ? day.mealDetails?.dinner : undefined, time: '19:00' },
+          ]
+            .filter((meal) => meal.info)
+            .map((meal) => {
+              const [name, ...descriptionParts] = meal.info!.split(' - ');
+              const description = descriptionParts.join(' - ').trim();
 
-          return {
-            time: meal.time,
-            name: name.trim(),
-            description: description || meal.info!,
-            type: 'meal' as const,
-          };
-        });
+              return {
+                time: meal.time,
+                name: name.trim(),
+                description: description || meal.info!,
+                type: 'meal' as const,
+                geoCoordinates: meal.detail?.location
+                  ? {
+                      lat: meal.detail.location.lat,
+                      lng: meal.detail.location.lng,
+                    }
+                  : undefined,
+                address: meal.detail?.location?.address,
+              };
+            });
 
       return {
         day: day.day,
@@ -115,6 +278,7 @@ function buildPersistedPlan(plan: TripPlan): PersistedTripPlan {
 }
 
 export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMap }: AIPlannerChatPageProps) {
+  const { t, locale } = useT();
   const { currentUser } = useAuthContext();
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
@@ -128,6 +292,7 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
   const [replanningDay, setReplanningDay] = useState<number | null>(null);
   const [savedTripId, setSavedTripId] = useState<string | null>(null);
   const isMountedRef = useRef(true);
+  const [lastStageTimings, setLastStageTimings] = useState<TripPlanningResponse['diagnostics']['stageTimings'] | null>(null);
   
   // Detail card states
   const [selectedRestaurant, setSelectedRestaurant] = useState<RestaurantDetail | null>(null);
@@ -149,18 +314,19 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
         setMessages(prev => [...prev, { role: 'assistant', content: result.text, timestamp: new Date() }]);
         setCurrentPlan(result.tripPlan as TripPlan);
         setCurrentIntent(result.intent);
+        setLastStageTimings(result.diagnostics.stageTimings);
         setExpandedDays([1]);
       }
 
       if (!result.validation.can_generate) {
-        toast.warning('当前可用数据较少，建议补充更具体的目的地和偏好。');
+        toast.warning(t('planner.fewerData'));
       }
     } catch (err) {
       console.error('[AIPlannerChatPage] TripPlanning 调用失败:', err);
       if (isMountedRef.current) {
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: '抱歉，AI 助手暂时无法响应，请稍后重试。',
+          content: t('planner.noResponse'),
           timestamp: new Date(),
         }]);
       }
@@ -208,14 +374,15 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
       }
 
       setSavedTripId(savedTrip.id);
-      toast.success('行程已保存，可直接查看地图');
+      toast.success(t('planner.saveSuccess'));
 
       if (!onOpenMap) {
         onSaveSuccess?.();
       }
     } catch (err) {
       if (isMountedRef.current) {
-        toast.error('保存失败：' + (err instanceof Error ? err.message : '未知错误'));
+        const message = err instanceof Error ? err.message : t('common.unknownError');
+        toast.error(t('planner.saveFailed', { message }));
       }
     } finally {
       if (isMountedRef.current) {
@@ -272,15 +439,16 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
       }]);
       setCurrentPlan(result.tripPlan as TripPlan);
       setCurrentIntent(result.intent);
+      setLastStageTimings(result.diagnostics.stageTimings);
       if (didChangeDay) {
-        toast.success(`第 ${dayNumber} 天已切换为室内雨天方案`);
+        toast.success(t('planner.weather.switched', { day: dayNumber }));
       } else {
-        toast.info(`第 ${dayNumber} 天未找到更合适的室内替代点位，已保留原日程`);
+        toast.info(t('planner.weather.kept', { day: dayNumber }));
       }
     } catch (err) {
       console.error('[AIPlannerChatPage] 雨天重规划失败:', err);
       if (isMountedRef.current) {
-        toast.error('雨天重规划失败，请稍后重试');
+        toast.error(t('planner.weather.failed'));
       }
     } finally {
       if (isMountedRef.current) {
@@ -292,7 +460,7 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
   // Handle click functions
   const handleActivityClick = (activity: Activity) => {
     if (activity.type === 'transport') {
-      const data = getMockTransportData(activity.name, '酒店');
+      const data = getMockTransportData(activity.name, t('planner.transportFallback'));
       setSelectedTransport(data);
     } else if (activity.type === 'attraction') {
       const data = getMockAttractionData(activity.name);
@@ -318,8 +486,8 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
               <ChevronLeft className="w-6 h-6 text-gray-700" />
             </button>
             <div>
-              <h1 className="text-gray-900">AI 行程规划助手</h1>
-              <p className="text-xs text-gray-500">智能对话，实时更新方案</p>
+              <h1 className="text-gray-900">{t('planner.title')}</h1>
+              <p className="text-xs text-gray-500">{t('planner.subtitle')}</p>
             </div>
           </div>
           <Button
@@ -328,7 +496,7 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
             onClick={() => setShowPlanPreview(!showPlanPreview)}
             className="md:hidden"
           >
-            <span>{showPlanPreview ? '隐藏方案' : '显示方案'}</span>
+            <span>{showPlanPreview ? t('planner.planSidebar.hide') : t('planner.planSidebar.show')}</span>
           </Button>
         </div>
       </div>
@@ -345,51 +513,24 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
                   <div className="w-16 h-16 bg-gradient-to-br from-red-500 to-pink-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
                     <Sparkles className="w-8 h-8 text-white" />
                   </div>
-                  <h2 className="text-gray-900 mb-2">开始规划你的行程</h2>
+                  <h2 className="text-gray-900 mb-2">{t('planner.emptyState.title')}</h2>
                   <p className="text-sm text-gray-600 mb-6">
-                    告诉我你的需求，我会实时为你生成和优化行程方案
+                    {t('planner.emptyState.subtitle')}
                   </p>
                   <div className="grid grid-cols-2 gap-2 max-w-md mx-auto">
-                    <button
-                      onClick={() => {
-                        setInputValue('帮我规划一个伦敦7日游');
-                        setTimeout(() => handleSend(), 100);
-                      }}
-                      className="text-left p-3 bg-white rounded-lg border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-colors"
-                    >
-                      <p className="text-sm text-gray-900">伦敦7日深度游</p>
-                      <p className="text-xs text-gray-500 mt-1">经典+小众景点</p>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setInputValue('预算有限，帮我优化行程');
-                        setTimeout(() => handleSend(), 100);
-                      }}
-                      className="text-left p-3 bg-white rounded-lg border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-colors"
-                    >
-                      <p className="text-sm text-gray-900">经济型方案</p>
-                      <p className="text-xs text-gray-500 mt-1">省钱攻略</p>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setInputValue('推荐美食餐厅');
-                        setTimeout(() => handleSend(), 100);
-                      }}
-                      className="text-left p-3 bg-white rounded-lg border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-colors"
-                    >
-                      <p className="text-sm text-gray-900">美食推荐</p>
-                      <p className="text-xs text-gray-500 mt-1">特色餐厅</p>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setInputValue('准备雨天备选方案');
-                        setTimeout(() => handleSend(), 100);
-                      }}
-                      className="text-left p-3 bg-white rounded-lg border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-colors"
-                    >
-                      <p className="text-sm text-gray-900">雨天方案</p>
-                      <p className="text-xs text-gray-500 mt-1">室内活动</p>
-                    </button>
+                    {([1, 2, 3, 4] as const).map((idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => {
+                          setInputValue(t(`planner.emptyState.prompt${idx}`));
+                          setTimeout(() => handleSend(), 100);
+                        }}
+                        className="text-left p-3 bg-white rounded-lg border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-colors"
+                      >
+                        <p className="text-sm text-gray-900">{t(`planner.emptyState.prompt${idx}Title`)}</p>
+                        <p className="text-xs text-gray-500 mt-1">{t(`planner.emptyState.prompt${idx}Desc`)}</p>
+                      </button>
+                    ))}
                   </div>
                 </div>
               )}
@@ -409,14 +550,14 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
                     {message.role === 'assistant' && (
                       <div className="flex items-center gap-2 mb-2">
                         <Sparkles className="w-4 h-4 text-red-500" />
-                        <span className="text-xs text-gray-500">AI 助手</span>
+                        <span className="text-xs text-gray-500">{t('planner.assistantLabel')}</span>
                       </div>
                     )}
                     <div className="text-sm whitespace-pre-wrap leading-relaxed">
                       {message.content}
                     </div>
                     <div className={`text-xs mt-2 ${message.role === 'user' ? 'text-white/70' : 'text-gray-400'}`}>
-                      {message.timestamp.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                      {message.timestamp.toLocaleTimeString(locale === 'en' ? 'en-US' : 'zh-CN', { hour: '2-digit', minute: '2-digit' })}
                     </div>
                   </div>
                 </div>
@@ -427,7 +568,7 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
                   <div className="bg-white border border-gray-200 rounded-2xl px-4 py-3">
                     <div className="flex items-center gap-2">
                       <Sparkles className="w-4 h-4 text-red-500 animate-pulse" />
-                      <span className="text-sm text-gray-600">AI 正在思考...</span>
+                      <span className="text-sm text-gray-600">{t('planner.thinking')}</span>
                     </div>
                   </div>
                 </div>
@@ -442,7 +583,7 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
             <div className="max-w-3xl mx-auto">
               <div className="flex gap-2">
                 <Textarea
-                  placeholder="告诉我你想要调整的内容，比如：调整预算、更换餐厅、添加景点..."
+                  placeholder={t('planner.placeholder')}
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
                   onKeyDown={(e) => {
@@ -463,7 +604,7 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
                 </Button>
               </div>
               <div className="flex gap-2 mt-2 text-xs text-gray-500">
-                <span>💡 按 Enter 发送，Shift + Enter 换行</span>
+                <span>{t('planner.inputHint')}</span>
               </div>
             </div>
           </div>
@@ -474,8 +615,8 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
           <div className="w-full md:w-[400px] lg:w-[480px] bg-white border-l border-gray-200 flex flex-col overflow-hidden">
             {/* Header - Fixed */}
             <div className="p-4 border-b border-gray-200 shrink-0">
-              <h2 className="text-gray-900 mb-1">当前方案</h2>
-              <p className="text-xs text-gray-500">实时更新中</p>
+              <h2 className="text-gray-900 mb-1">{t('planner.planSidebar.currentPlan')}</h2>
+              <p className="text-xs text-gray-500">{t('planner.planSidebar.realtime')}</p>
             </div>
 
             {/* Scrollable Content Area */}
@@ -491,29 +632,54 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
                     </div>
                     <div className="flex items-center gap-2 text-gray-600">
                       <DollarSign className="w-4 h-4" />
-                      预算：{currentPlan.budget}
+                      {t('planner.planSidebar.budget', { value: currentPlan.budget })}
                     </div>
                     <div className="flex items-center gap-2 text-gray-600">
                       <Clock className="w-4 h-4" />
-                      共 {currentPlan.days.length} 天
+                      {t('planner.planSidebar.totalDays', { count: currentPlan.days.length })}
                     </div>
                   </div>
                 </div>
 
+                {lastStageTimings && (
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <h3 className="text-sm text-gray-900 mb-3">{t('planner.planSidebar.timingsTitle')}</h3>
+                    <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
+                      <div>{t('planner.planSidebar.timingAttraction', { ms: Math.round(lastStageTimings.attraction_retrieval) })}</div>
+                      <div>{t('planner.planSidebar.timingRestaurantNear', { ms: Math.round(lastStageTimings.restaurant_proximity) })}</div>
+                      <div>{t('planner.planSidebar.timingRestaurantFallback', { ms: Math.round(lastStageTimings.restaurant_fallback) })}</div>
+                      <div>{t('planner.planSidebar.timingValidator', { ms: Math.round(lastStageTimings.validator) })}</div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Daily Plans */}
-                {currentPlan.days.map((day) => (
-                  <div key={day.day} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                {currentPlan.days.map((day) => {
+                  const allItems = buildTimelineItems(day);
+
+                  const getItemIcon = (type: string) => {
+                    switch (type) {
+                      case 'attraction': return <Camera className="w-5 h-5 text-blue-500" />;
+                      case 'meal': return <Utensils className="w-5 h-5 text-orange-500" />;
+                      case 'transport': return <Train className="w-5 h-5 text-purple-500" />;
+                      case 'rest': return <Home className="w-5 h-5 text-green-500" />;
+                      default: return <Clock className="w-5 h-5 text-gray-500" />;
+                    }
+                  };
+
+                  return (
+                  <Card key={day.day} className="overflow-hidden">
                     <button
                       onClick={() => toggleDay(day.day)}
                       className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
                     >
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-red-500 text-white rounded-lg flex items-center justify-center shrink-0">
-                          <span className="text-sm">D{day.day}</span>
+                        <div className="w-12 h-12 bg-gradient-to-br from-red-500 to-pink-500 rounded-xl flex items-center justify-center text-white shrink-0">
+                          D{day.day}
                         </div>
                         <div className="text-left">
-                          <p className="text-sm text-gray-900">{day.theme}</p>
-                          <p className="text-xs text-gray-500">{day.activities.length} 个活动</p>
+                          <div className="text-gray-900">{day.theme}</div>
+                          <div className="text-sm text-gray-500">{t('planner.planSidebar.dayActivities', { count: day.activities.length })}</div>
                         </div>
                       </div>
                       {expandedDays.includes(day.day) ? (
@@ -524,104 +690,109 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
                     </button>
 
                     {expandedDays.includes(day.day) && (
-                      <div className="px-4 pb-4 space-y-3">
-                        <Separator />
-                        
-                        {/* Activities */}
-                        <div className="space-y-2">
-                          {day.activities.map((activity, idx) => (
-                            <button
-                              key={idx}
-                              onClick={() => handleActivityClick(activity)}
-                              className="flex gap-3 w-full text-left hover:bg-gray-50 -mx-2 px-2 py-1.5 rounded-lg transition-colors"
-                            >
-                              <div className="text-xs text-gray-500 w-12 shrink-0 pt-0.5">
-                                {activity.time}
+                      <div className="border-t border-gray-100">
+                        {allItems.map((item, index) => {
+                          const isInteractive = item.type === 'meal' || item.type === 'attraction' || item.type === 'transport';
+
+                          const timelineContent = (
+                            <div className="flex gap-3">
+                              <div className="flex flex-col items-center">
+                                <div className="flex items-center justify-center w-10 h-10 rounded-full bg-gray-100">
+                                  {getItemIcon(item.type)}
+                                </div>
+                                {index < allItems.length - 1 && (
+                                  <div className="w-0.5 flex-1 min-h-[12px] bg-gray-200 my-1" />
+                                )}
                               </div>
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2">
-                                  <p className="text-sm text-gray-900">{activity.name}</p>
-                                  {activity.source && (
+
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                                    {item.time}
+                                  </span>
+                                  {item.mealType && (
+                                    <span className="text-xs text-orange-500">{t(`planner.meals.${item.mealType}`)}</span>
+                                  )}
+                                  {'source' in item && item.source && (
                                     <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                                      {activity.source}
-                                      {typeof activity.confidence === 'number'
-                                        ? ` ${Math.round(activity.confidence * 100)}%`
+                                      {item.source}
+                                      {typeof item.confidence === 'number'
+                                        ? ` ${Math.round(item.confidence * 100)}%`
                                         : ''}
                                     </Badge>
                                   )}
                                 </div>
-                                <p className="text-xs text-gray-500 mt-0.5">{activity.description}</p>
+                                <h4 className="text-gray-900 mb-1 text-sm">{item.name}</h4>
+                                {item.description && (
+                                  <p className="text-xs text-gray-600">{item.description}</p>
+                                )}
+                                {'location' in item && item.location?.address && (
+                                  <p className="text-xs text-gray-400 flex items-center gap-1 mt-1">
+                                    <MapPin className="w-3 h-3" />
+                                    {item.location.address}
+                                  </p>
+                                )}
                               </div>
-                            </button>
-                          ))}
-                        </div>
-
-                        {/* Meals */}
-                        {(day.meals.breakfast || day.meals.lunch || day.meals.dinner) && (
-                          <>
-                            <Separator />
-                            <div className="space-y-1.5">
-                              <p className="text-xs text-gray-500 flex items-center gap-1">
-                                <span>🍽️</span>
-                                <span>餐饮推荐</span>
-                              </p>
-                              {day.meals.breakfast && (
-                                <button
-                                  onClick={() => handleMealClick(day.meals.breakfast!)}
-                                  className="text-xs text-gray-700 pl-5 hover:text-red-500 transition-colors w-full text-left"
-                                >
-                                  早餐：{day.meals.breakfast}
-                                </button>
-                              )}
-                              {day.meals.lunch && (
-                                <button
-                                  onClick={() => handleMealClick(day.meals.lunch!)}
-                                  className="text-xs text-gray-700 pl-5 hover:text-red-500 transition-colors w-full text-left"
-                                >
-                                  午餐：{day.meals.lunch}
-                                </button>
-                              )}
-                              {day.meals.dinner && (
-                                <button
-                                  onClick={() => handleMealClick(day.meals.dinner!)}
-                                  className="text-xs text-gray-700 pl-5 hover:text-red-500 transition-colors w-full text-left"
-                                >
-                                  晚餐：{day.meals.dinner}
-                                </button>
-                              )}
                             </div>
-                          </>
-                        )}
+                          );
+
+                          if (!isInteractive) {
+                            return (
+                              <div key={index} className="p-4 border-b border-gray-100 last:border-0">
+                                {timelineContent}
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <button
+                              key={index}
+                              type="button"
+                              onClick={() => {
+                                if (item.type === 'meal') {
+                                  handleMealClick(item.raw ?? `${item.name} - ${item.description}`);
+                                } else {
+                                  handleActivityClick(item);
+                                }
+                              }}
+                              className="w-full p-4 border-b border-gray-100 last:border-0 text-left hover:bg-gray-50 transition-colors"
+                            >
+                              {timelineContent}
+                            </button>
+                          );
+                        })}
 
                         {/* Alternative Plan */}
                         {day.alternativePlan && (
-                          <>
-                            <Separator />
+                          <div className="px-4 pb-3 pt-2">
                             <div className="bg-blue-50 rounded-lg p-3">
-                              <p className="text-xs text-gray-500 mb-1">🌧️ 雨天备选</p>
+                              <p className="text-xs text-gray-500 mb-1">{t('planner.planSidebar.rainyAlt')}</p>
                               <p className="text-xs text-gray-700">{day.alternativePlan}</p>
                             </div>
-                          </>
+                          </div>
                         )}
 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full"
-                          onClick={() => handleBadWeatherReplan(day.day)}
-                          disabled={isTyping || replanningDay !== null}
-                        >
-                          {replanningDay === day.day ? (
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          ) : (
-                            <CloudRain className="w-4 h-4 mr-2" />
-                          )}
-                          <span>{replanningDay === day.day ? '重新规划中...' : '今天下雨，换室内方案'}</span>
-                        </Button>
+                        <div className="px-4 pb-4 pt-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full"
+                            onClick={() => handleBadWeatherReplan(day.day)}
+                            disabled={isTyping || replanningDay !== null}
+                          >
+                            {replanningDay === day.day ? (
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            ) : (
+                              <CloudRain className="w-4 h-4 mr-2" />
+                            )}
+                            <span>{replanningDay === day.day ? t('planner.planSidebar.replanning') : t('planner.planSidebar.replanRainyButton')}</span>
+                          </Button>
+                        </div>
                       </div>
                     )}
-                  </div>
-                ))}
+                  </Card>
+                  );
+                })}
               </div>
             </div>
 
@@ -633,16 +804,22 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
                   className="flex-1"
                   size="sm"
                   onClick={() => {
-                    if (!savedTripId) {
-                      toast.info('请先保存行程再查看地图');
+                    if (!currentPlan) {
+                      toast.info(t('planner.planSidebar.noMap'));
                       return;
                     }
 
-                    onOpenMap?.(savedTripId);
+                    if (savedTripId) {
+                      onOpenMap?.(savedTripId);
+                      return;
+                    }
+
+                    onOpenMap?.(buildPreviewMapPayload(currentPlan));
                   }}
+                  disabled={!currentPlan}
                 >
                   <MapPin className="w-4 h-4 mr-2" />
-                  <span>显示地图</span>
+                  <span>{t('planner.planSidebar.showMap')}</span>
                 </Button>
                 <Button
                   className="flex-1 bg-red-500 hover:bg-red-600"
@@ -654,7 +831,7 @@ export function AIPlannerChatPage({ onBack, initialPlan, onSaveSuccess, onOpenMa
                     className={`w-4 h-4 ${isSaving ? 'mr-1 animate-spin' : 'mr-1 opacity-0'}`}
                     aria-hidden="true"
                   />
-                  <span>{isSaving ? '保存中...' : '保存行程'}</span>
+                  <span>{isSaving ? t('planner.saving') : t('planner.savePlan')}</span>
                 </Button>
               </div>
             </div>

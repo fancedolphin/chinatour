@@ -7,6 +7,7 @@ import {
   GOOGLE_MAPS_FREE_WARN,
   APPLE_MAPS_WARN_THRESHOLD,
 } from '../../utils/mapExport';
+import { useT } from '@/i18n/useT';
 
 export type ExportApp = 'amap' | 'google' | 'apple';
 
@@ -61,21 +62,21 @@ export function ExportScopeSheet({
   onExport,
   onClose,
 }: ExportScopeSheetProps) {
+  const { t } = useT();
   const [selectedIdx, setSelectedIdx] = useState(initialScopeIndex);
   const scope = scopes[selectedIdx];
   const count = scope.locations.length;
 
   // Per-app warnings based on current scope's location count
-  const amapWarn =
-    count > 12 ? `将截断为前${Math.min(count, AMAP_VIA_HARD_LIMIT + 2)}个地点` : null;
-  const googleWarn =
-    count > GOOGLE_MAPS_FREE_WARN
-      ? `免费版建议≤${GOOGLE_MAPS_FREE_WARN}个途经点，超出可能被忽略`
-      : null;
-  const appleWarn =
-    count > APPLE_MAPS_WARN_THRESHOLD
-      ? `途经点较多，部分设备可能无法打开`
-      : null;
+  const amapWarn = count > 12
+    ? t('mapExport.amapTruncate', { count: Math.min(count, AMAP_VIA_HARD_LIMIT + 2) })
+    : null;
+  const googleWarn = count > GOOGLE_MAPS_FREE_WARN
+    ? t('mapExport.googleWarn', { limit: GOOGLE_MAPS_FREE_WARN })
+    : null;
+  const appleWarn = count > APPLE_MAPS_WARN_THRESHOLD
+    ? t('mapExport.appleWarn')
+    : null;
 
   return (
     <div className="fixed inset-0 z-[70] flex flex-col justify-end">
@@ -89,7 +90,7 @@ export function ExportScopeSheet({
       >
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
-          <span className="text-base font-semibold text-gray-900">导出到地图</span>
+          <span className="text-base font-semibold text-gray-900">{t('mapExport.title')}</span>
           <button
             onClick={onClose}
             className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors"
@@ -101,7 +102,7 @@ export function ExportScopeSheet({
         {/* Scope selection — hidden for single-scope trips */}
         {scopes.length > 1 && (
           <div className="mb-4">
-            <p className="text-xs text-gray-500 mb-2">选择导出范围</p>
+            <p className="text-xs text-gray-500 mb-2">{t('mapExport.selectScope')}</p>
             <div className="flex flex-wrap gap-2">
               {scopes.map((s, i) => (
                 <button
@@ -121,12 +122,12 @@ export function ExportScopeSheet({
         )}
 
         {/* App buttons */}
-        <p className="text-xs text-gray-500 mb-2">选择地图软件</p>
+        <p className="text-xs text-gray-500 mb-2">{t('mapExport.selectApp')}</p>
         <div className="space-y-2">
           <ExportAppButton
             icon={<MapPin className="w-4 h-4 text-white" />}
-            label="高德地图"
-            sublabel="在高德地图中打开路线"
+            label={t('mapExport.amap')}
+            sublabel={t('mapExport.amapSub')}
             warn={amapWarn}
             iconBg="bg-blue-500"
             hoverBg="hover:bg-blue-50"
@@ -134,8 +135,8 @@ export function ExportScopeSheet({
           />
           <ExportAppButton
             icon={<Navigation className="w-4 h-4 text-white" />}
-            label="Google Maps"
-            sublabel="在 Google Maps 中打开路线"
+            label={t('mapExport.google')}
+            sublabel={t('mapExport.googleSub')}
             warn={googleWarn}
             iconBg="bg-green-500"
             hoverBg="hover:bg-green-50"
@@ -143,8 +144,8 @@ export function ExportScopeSheet({
           />
           <ExportAppButton
             icon={<Apple className="w-4 h-4 text-white" />}
-            label="Apple Maps"
-            sublabel="在 Apple 地图中打开路线"
+            label={t('mapExport.apple')}
+            sublabel={t('mapExport.appleSub')}
             warn={appleWarn}
             iconBg="bg-gray-800"
             hoverBg="hover:bg-gray-50"

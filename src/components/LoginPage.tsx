@@ -7,6 +7,7 @@ import { Separator } from './ui/separator';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { useAuthContext } from '../presentation/context/AuthContext';
 import { toast } from 'sonner@2.0.3';
+import { useT } from '@/i18n/useT';
 
 interface LoginPageProps {
   onClose: () => void;
@@ -14,6 +15,7 @@ interface LoginPageProps {
 }
 
 export function LoginPage({ onClose, onLoginSuccess }: LoginPageProps) {
+  const { t } = useT();
   const { login, register, loading } = useAuthContext();
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [showPassword, setShowPassword] = useState(false);
@@ -23,6 +25,7 @@ export function LoginPage({ onClose, onLoginSuccess }: LoginPageProps) {
     email: '',
     password: '',
   });
+  const loginHint = t('auth.testAccountHint');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,18 +38,12 @@ export function LoginPage({ onClose, onLoginSuccess }: LoginPageProps) {
         const result = await login(formData.email, formData.password);
         
         if (result.success) {
-          console.log('[LoginPage] 登录成功，准备关闭并跳转');
-          toast.success('登录成功！');
-          
-          // 先调用 onLoginSuccess，再调用 onClose
-          if (onLoginSuccess) {
-            onLoginSuccess();
-          }
+          toast.success(t('auth.loginSuccess'));
+          if (onLoginSuccess) onLoginSuccess();
           onClose();
         } else {
-          console.log('[LoginPage] 登录失败:', result.error);
-          setError(result.error || '登录失败，请检查用户名和密码');
-          toast.error(result.error || '登录失败');
+          setError(result.error || t('auth.loginFailedDetail'));
+          toast.error(result.error || t('auth.loginFailed'));
         }
       } else {
         // 注册逻辑
@@ -60,19 +57,17 @@ export function LoginPage({ onClose, onLoginSuccess }: LoginPageProps) {
         });
         
         if (result.success) {
-          toast.success('注册成功！');
-          if (onLoginSuccess) {
-            onLoginSuccess();
-          }
+          toast.success(t('auth.registerSuccess'));
+          if (onLoginSuccess) onLoginSuccess();
           onClose();
         } else {
-          const errorMsg = result.errors?.join(', ') || '注册失败';
+          const errorMsg = result.errors?.join(', ') || t('auth.registerFailed');
           setError(errorMsg);
           toast.error(errorMsg);
         }
       }
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : '操作失败';
+      const errorMsg = err instanceof Error ? err.message : t('auth.operationFailed');
       setError(errorMsg);
       toast.error(errorMsg);
     }
@@ -92,13 +87,11 @@ export function LoginPage({ onClose, onLoginSuccess }: LoginPageProps) {
     });
     
     if (result.success) {
-      toast.success(`通过${provider}登录成功！`);
-      if (onLoginSuccess) {
-        onLoginSuccess();
-      }
+      toast.success(t('auth.socialLoginSuccess', { provider }));
+      if (onLoginSuccess) onLoginSuccess();
       onClose();
     } else {
-      toast.error('社交登录失败');
+      toast.error(t('auth.socialLoginFailed'));
     }
   };
 
@@ -108,8 +101,8 @@ export function LoginPage({ onClose, onLoginSuccess }: LoginPageProps) {
         {/* Header */}
         <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between rounded-t-3xl">
           <div>
-            <h2 className="text-gray-900">{mode === 'login' ? '欢迎回来' : '创建账号'}</h2>
-            <p className="text-xs text-gray-500 mt-1">开启你的旅行规划之旅</p>
+            <h2 className="text-gray-900">{mode === 'login' ? t('auth.welcomeBack') : t('auth.createAccount')}</h2>
+            <p className="text-xs text-gray-500 mt-1">{t('auth.subtitle')}</p>
           </div>
           <button
             onClick={onClose}
@@ -130,7 +123,7 @@ export function LoginPage({ onClose, onLoginSuccess }: LoginPageProps) {
             <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-4">
               <div className="flex items-center gap-2 text-white">
                 <Sparkles className="w-5 h-5" />
-                <span className="text-sm">AI 智能行程规划</span>
+                <span className="text-sm">{t('auth.smartTrip')}</span>
               </div>
             </div>
           </div>
@@ -146,9 +139,10 @@ export function LoginPage({ onClose, onLoginSuccess }: LoginPageProps) {
           {/* Default Accounts Info */}
           <div className="bg-blue-50 border border-blue-200 px-4 py-3 rounded-lg">
             <p className="text-xs text-blue-800">
-              <strong>默认账户：</strong><br/>
-              管理员: admin / admin123<br/>
-              测试用户: testuser / test123
+              <strong>{mode === 'login' ? t('auth.loginNotice') : t('auth.testAccountLabel')}</strong><br/>
+              {mode === 'login' ? t('auth.loginNoticeBody') : loginHint}
+              <br />
+              {loginHint}
             </p>
           </div>
 
@@ -158,12 +152,12 @@ export function LoginPage({ onClose, onLoginSuccess }: LoginPageProps) {
               <div>
                 <Label htmlFor="name" className="flex items-center gap-2 text-gray-700">
                   <User className="w-4 h-4" />
-                  用户名
+                  {t('auth.displayName')}
                 </Label>
                 <Input
                   id="name"
                   type="text"
-                  placeholder="请输入用户名"
+                  placeholder={t('auth.displayNamePlaceholder')}
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   className="mt-2"
@@ -175,29 +169,34 @@ export function LoginPage({ onClose, onLoginSuccess }: LoginPageProps) {
             <div>
               <Label htmlFor="email" className="flex items-center gap-2 text-gray-700">
                 <Mail className="w-4 h-4" />
-                {mode === 'login' ? '用户名/邮箱' : '邮箱'}
+                {t('auth.email')}
               </Label>
               <Input
                 id="email"
-                type={mode === 'login' ? 'text' : 'email'}
-                placeholder={mode === 'login' ? '请输入用户名或邮箱' : '请输入邮箱地址'}
+                type="email"
+                placeholder={t('auth.emailPlaceholder')}
                 value={formData.email}
                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                 className="mt-2"
                 required
               />
+              {mode === 'login' && (
+                <p className="mt-2 text-xs text-gray-500">
+                  {t('auth.supabaseEmailNote')}
+                </p>
+              )}
             </div>
 
             <div>
               <Label htmlFor="password" className="flex items-center gap-2 text-gray-700">
                 <Lock className="w-4 h-4" />
-                密码
+                {t('auth.password')}
               </Label>
               <div className="relative mt-2">
                 <Input
                   id="password"
                   type={showPassword ? 'text' : 'password'}
-                  placeholder="请输入密码"
+                  placeholder={t('auth.passwordPlaceholder')}
                   value={formData.password}
                   onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                   className="pr-10"
@@ -221,10 +220,10 @@ export function LoginPage({ onClose, onLoginSuccess }: LoginPageProps) {
               <div className="flex items-center justify-between text-sm">
                 <label className="flex items-center gap-2 cursor-pointer text-gray-600">
                   <input type="checkbox" className="rounded border-gray-300" />
-                  <span>记住我</span>
+                  <span>{t('auth.rememberMe')}</span>
                 </label>
                 <button type="button" className="text-red-500 hover:text-red-600">
-                  忘记密码？
+                  {t('auth.forgotPassword')}
                 </button>
               </div>
             )}
@@ -235,19 +234,19 @@ export function LoginPage({ onClose, onLoginSuccess }: LoginPageProps) {
               size="lg"
               disabled={loading}
             >
-              {loading ? '处理中...' : (mode === 'login' ? '登录' : '注册')}
+              {loading ? t('auth.processing') : (mode === 'login' ? t('auth.login') : t('auth.register'))}
             </Button>
           </form>
 
           {/* Toggle Mode */}
           <div className="mt-4 text-center text-sm text-gray-600">
-            {mode === 'login' ? '还没有账号？' : '已有账号？'}
+            {mode === 'login' ? t('auth.noAccount') : t('auth.hasAccount')}
             <button
               type="button"
               onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
               className="ml-2 text-red-500 hover:text-red-600"
             >
-              {mode === 'login' ? '立即注册' : '立即登录'}
+              {mode === 'login' ? t('auth.registerNow') : t('auth.loginNow')}
             </button>
           </div>
 
@@ -255,7 +254,7 @@ export function LoginPage({ onClose, onLoginSuccess }: LoginPageProps) {
           <div className="relative my-6">
             <Separator />
             <div className="absolute inset-0 flex items-center justify-center">
-              <span className="bg-white px-4 text-xs text-gray-500">或</span>
+              <span className="bg-white px-4 text-xs text-gray-500">{t('auth.or')}</span>
             </div>
           </div>
 
@@ -313,13 +312,13 @@ export function LoginPage({ onClose, onLoginSuccess }: LoginPageProps) {
 
           {/* Terms */}
           <p className="mt-6 text-xs text-center text-gray-500">
-            登录即表示同意
+            {t('auth.termsPrefix')}
             <button type="button" className="text-red-500 hover:text-red-600 mx-1">
-              用户协议
+              {t('auth.termsLink')}
             </button>
-            和
+            {t('auth.termsAnd')}
             <button type="button" className="text-red-500 hover:text-red-600 ml-1">
-              隐私政策
+              {t('auth.privacyLink')}
             </button>
           </p>
         </div>

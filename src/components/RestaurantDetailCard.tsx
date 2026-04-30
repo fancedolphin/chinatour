@@ -3,6 +3,7 @@ import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
 import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
+import { useT } from '@/i18n/useT';
 
 export interface DishItem {
   name: string;
@@ -29,6 +30,8 @@ interface RestaurantDetailCardProps {
 }
 
 export function RestaurantDetailCard({ restaurant, onClose }: RestaurantDetailCardProps) {
+  const { t } = useT();
+  const tips = t('restaurantDetail.tips', { returnObjects: true }) as string[];
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
@@ -66,11 +69,11 @@ export function RestaurantDetailCard({ restaurant, onClose }: RestaurantDetailCa
               <div className="flex items-start gap-3">
                 <Clock className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
                 <div>
-                  <p className="text-sm text-gray-600">营业时间：{restaurant.hours}</p>
+                  <p className="text-sm text-gray-600">{t('restaurantDetail.hoursLabel', { hours: restaurant.hours })}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-600">人均：</span>
+                <span className="text-sm text-gray-600">{t('restaurantDetail.perPerson')}</span>
                 <span className="text-sm text-red-500">{restaurant.priceRange}</span>
               </div>
             </div>
@@ -81,12 +84,12 @@ export function RestaurantDetailCard({ restaurant, onClose }: RestaurantDetailCa
             <div>
               <h3 className="text-gray-900 mb-4 flex items-center gap-2">
                 <span>🍽️</span>
-                <span>招牌菜推荐</span>
+                <span>{t('restaurantDetail.signatureDishes')}</span>
               </h3>
               <div className="space-y-4">
                 {restaurant.signature.length === 0 ? (
                   <div className="bg-gray-50 rounded-xl p-4 text-sm text-gray-500">
-                    暂无已清洗的招牌菜数据。
+                    {t('restaurantDetail.noDishes')}
                   </div>
                 ) : (
                   restaurant.signature.map((dish, index) => (
@@ -100,7 +103,7 @@ export function RestaurantDetailCard({ restaurant, onClose }: RestaurantDetailCa
                           />
                         ) : (
                           <div className="w-24 h-24 rounded-lg shrink-0 bg-white border border-gray-200 flex items-center justify-center text-xs text-gray-400">
-                            暂无图片
+                            {t('restaurantDetail.noImage')}
                           </div>
                         )}
                         <div className="flex-1 min-w-0">
@@ -118,7 +121,7 @@ export function RestaurantDetailCard({ restaurant, onClose }: RestaurantDetailCa
                             <div className="mt-3 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2">
                               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                               <div className="flex-1">
-                                <p className="text-xs text-amber-900 mb-1">过敏源警示</p>
+                                <p className="text-xs text-amber-900 mb-1">{t('restaurantDetail.allergyWarning')}</p>
                                 <div className="flex flex-wrap gap-1">
                                   {dish.allergens.map((allergen, i) => (
                                     <span
@@ -147,17 +150,17 @@ export function RestaurantDetailCard({ restaurant, onClose }: RestaurantDetailCa
             <div>
               <h3 className="text-gray-900 mb-4 flex items-center gap-2">
                 <Languages className="w-5 h-5 text-red-500" />
-                <span>双语菜单</span>
+                <span>{t('restaurantDetail.menu')}</span>
               </h3>
               <div className="bg-gray-50 rounded-xl p-4">
                 <img
                   src={restaurant.menuImage}
-                  alt="餐厅菜单"
+                  alt={t('restaurantDetail.menuAlt')}
                   className="w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
                   onClick={() => window.open(restaurant.menuImage, '_blank')}
                 />
                 <p className="text-xs text-gray-500 text-center mt-2">
-                  点击图片可放大查看完整菜单
+                  {t('restaurantDetail.menuTip')}
                 </p>
               </div>
             </div>
@@ -165,11 +168,9 @@ export function RestaurantDetailCard({ restaurant, onClose }: RestaurantDetailCa
 
             {/* Tips */}
             <div className="bg-blue-50 rounded-xl p-4">
-              <h4 className="text-sm text-gray-900 mb-2">💡 贴心提示</h4>
+              <h4 className="text-sm text-gray-900 mb-2">{t('restaurantDetail.tipsTitle')}</h4>
               <ul className="text-xs text-gray-600 space-y-1">
-                <li>• 建议提前预订，高峰期可能需要等位</li>
-                <li>• 支持支付宝、微信支付等多种支付方式</li>
-                <li>• 如有食物过敏，请提前告知服务员</li>
+                {tips.map((tip, i) => <li key={i}>• {tip}</li>)}
               </ul>
             </div>
           </div>
@@ -183,13 +184,13 @@ export function RestaurantDetailCard({ restaurant, onClose }: RestaurantDetailCa
             onClick={() => window.open(`https://maps.google.com/?q=${encodeURIComponent(restaurant.address)}`, '_blank')}
           >
             <MapPin className="w-4 h-4 mr-2" />
-            导航前往
+            {t('restaurantDetail.navigate')}
           </Button>
           <Button
             className="flex-1 bg-red-500 hover:bg-red-600"
             onClick={onClose}
           >
-            关闭
+            {t('restaurantDetail.close')}
           </Button>
         </div>
       </div>

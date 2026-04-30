@@ -3,7 +3,7 @@ import { AlertCircle, ChevronDown, Loader2, Search, X } from "lucide-react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { useLanguage } from "@/presentation/context/LanguageContext";
+import { useT } from "@/i18n/useT";
 import {
   ALLERGEN_DISCLAIMER_EN,
   ALLERGEN_DISCLAIMER_ZH,
@@ -21,7 +21,8 @@ import { FoodEncyclopediaItem, getFoodList } from "@/services/foodEncyclopediaSe
 const allergenMetaMap = new Map(FOOD_ALLERGEN_OPTIONS.map((item) => [item.value, item]));
 
 export function FoodEncyclopediaSection() {
-  const { language } = useLanguage();
+  const { locale } = useT();
+  const language = locale;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [foods, setFoods] = useState<FoodEncyclopediaItem[]>([]);

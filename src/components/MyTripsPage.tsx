@@ -10,6 +10,8 @@ import { PublishTripModal } from './PublishTripModal';
 import { useAuthContext } from '@/presentation/context/AuthContext';
 import { tripService, type Trip as DBTrip } from '@/services/tripService';
 import { sharedTripService } from '@/services/sharedTripService';
+import { useT } from '@/i18n/useT';
+import { formatDateRange as fmtDateRange } from '@/utils/formatters';
 
 interface Trip {
   id: string;
@@ -35,6 +37,7 @@ interface MyTripsPageProps {
 }
 
 export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId, onOpenMapHandled }: MyTripsPageProps = {}) {
+  const { t, locale } = useT();
   const { currentUser, loading: authLoading } = useAuthContext();
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
@@ -93,43 +96,32 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
         destination: dbTrip.destination,
         startDate: dbTrip.start_date,
         endDate: dbTrip.end_date,
-        dates: formatDateRange(dbTrip.start_date, dbTrip.end_date),
+        dates: fmtDateRange(dbTrip.start_date, dbTrip.end_date, locale),
         duration: dbTrip.duration || calculateDuration(dbTrip.start_date, dbTrip.end_date),
         status: dbTrip.status,
         image: dbTrip.image_url || 'https://images.unsplash.com/photo-1488646953014-85cb44e25828',
-        budget: dbTrip.budget || '未设置',
+        budget: dbTrip.budget || t('common.notSet'),
         source: dbTrip.source ?? null,
         isPublished: publishedSet.has(dbTrip.id),
       }));
       setTrips(mappedTrips);
     } catch (err) {
       console.error('[MyTripsPage] 加载行程失败:', err);
-      setError(err instanceof Error ? err.message : '加载失败');
+      setError(err instanceof Error ? err.message : t('common.loadFailed'));
     } finally {
       setLoading(false);
     }
   };
 
-  const formatDateRange = (start: string, end: string): string => {
-    const startDate = new Date(start);
-    const endDate = new Date(end);
-    const sYear = startDate.getFullYear();
-    const sMonth = startDate.getMonth() + 1;
-    const sDay = startDate.getDate();
-    const eMonth = endDate.getMonth() + 1;
-    const eDay = endDate.getDate();
-    return `${sYear}年${sMonth}月${sDay}日 - ${eMonth}月${eDay}日`;
-  };
-
   const calculateDuration = (start: string, end: string): string => {
     const ms = new Date(end).getTime() - new Date(start).getTime();
     const days = Math.ceil(ms / (1000 * 60 * 60 * 24)) + 1;
-    return `${days}天`;
+    return t('format.days', { count: days });
   };
 
   const handleDeleteTrip = async (tripId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('确定要删除这个行程吗？')) return;
+    if (!confirm(t('common.confirmDeleteTrip'))) return;
 
     try {
       setDeleting(tripId);
@@ -137,7 +129,8 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
       await loadTrips();
     } catch (err) {
       console.error('[MyTripsPage] 删除行程失败:', err);
-      alert('删除失败：' + (err instanceof Error ? err.message : '未知错误'));
+      const message = err instanceof Error ? err.message : t('common.unknownError');
+      alert(t('common.deleteFailed', { message }));
     } finally {
       setDeleting(null);
     }
@@ -148,18 +141,18 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
     if (onNavigateToPlanner) {
       onNavigateToPlanner();
     } else {
-      alert('导航功能未配置');
+      alert(t('common.navUnavailable'));
     }
   };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'planning':
-        return <Badge variant="outline" className="border-blue-500 text-blue-500">规划中</Badge>;
+        return <Badge variant="outline" className="border-blue-500 text-blue-500">{t('trip.planning')}</Badge>;
       case 'upcoming':
-        return <Badge className="bg-green-500">即将出发</Badge>;
+        return <Badge className="bg-green-500">{t('trip.upcoming')}</Badge>;
       case 'completed':
-        return <Badge variant="secondary">已完成</Badge>;
+        return <Badge variant="secondary">{t('trip.completed')}</Badge>;
       default:
         return null;
     }
@@ -194,7 +187,7 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
       <div className="min-h-screen bg-gray-50 pb-20 flex items-center justify-center">
         <div className="text-center">
           <Loader2 className="w-12 h-12 text-red-500 mx-auto mb-4 animate-spin" />
-          <p className="text-gray-600">加载中...</p>
+          <p className="text-gray-600">{t('common.loading')}</p>
         </div>
       </div>
     );
@@ -205,8 +198,8 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
     return (
       <div className="min-h-screen bg-gray-50 pb-20 flex items-center justify-center">
         <div className="text-center">
-          <p className="text-red-500 mb-4">加载失败：{error}</p>
-          <Button onClick={loadTrips}>重试</Button>
+          <p className="text-red-500 mb-4">{t('common.loadFailedWith', { message: error })}</p>
+          <Button onClick={loadTrips}>{t('common.retry')}</Button>
         </div>
       </div>
     );
@@ -216,7 +209,7 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-gray-50 pb-20 flex items-center justify-center">
-        <p className="text-gray-600">请先登录</p>
+        <p className="text-gray-600">{t('common.loginRequired')}</p>
       </div>
     );
   }
@@ -253,7 +246,7 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
           onClick={handleCreateTrip}
         >
           <Plus className="w-5 h-5 mr-2" />
-          创建新行程
+          {t('myTrips.createNew')}
         </Button>
 
         {/* Trips List */}
@@ -261,6 +254,8 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
           {trips.map((trip) => (
             <div
               key={trip.id}
+              data-testid="trip-card"
+              data-trip-id={trip.id}
               className="bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow cursor-pointer group"
             >
               <div className="relative h-40">
@@ -274,13 +269,13 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
                   {trip.source === 'forked' && (
                     <Badge variant="outline" className="text-blue-500 border-blue-200 bg-white flex items-center gap-1 w-fit text-xs">
                       <Download className="w-3 h-3" />
-                      从广场导入
+                      {t('myTrips.forkedBadge')}
                     </Badge>
                   )}
                   {trip.isPublished && (
                     <Badge className="bg-green-500 flex items-center gap-1 w-fit">
                       <Globe className="w-3 h-3" />
-                      已发布
+                      {t('myTrips.publishedBadge')}
                     </Badge>
                   )}
                 </div>
@@ -302,7 +297,7 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
                   </div>
                   <div className="flex items-center gap-2 text-sm text-gray-600">
                     <MapPin className="w-4 h-4" />
-                    预算：{trip.budget}
+                    {t('myTrips.budget', { value: trip.budget })}
                   </div>
                 </div>
 
@@ -314,7 +309,7 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
                       e.stopPropagation();
                       setPublishTrip(trip);
                     }}
-                    title={trip.isPublished ? '已发布到广场' : '发布到广场'}
+                    title={trip.isPublished ? t('myTrips.alreadyPublished') : t('myTrips.publishToSquare')}
                     className={trip.isPublished ? 'border-green-400 text-green-600' : ''}
                   >
                     <Globe className="w-4 h-4" />
@@ -348,7 +343,7 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
                       e.stopPropagation();
                       onContinueChat?.(trip.id);
                     }}
-                    title={trip.source === 'forked' ? '继续修改' : '继续与AI对话'}
+                    title={trip.source === 'forked' ? t('myTrips.continueEdit') : t('myTrips.continueWithAI')}
                   >
                     <MessageSquare className="w-4 h-4 text-blue-500" />
                   </Button>
@@ -359,7 +354,7 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
                       e.stopPropagation();
                       handleViewMap(trip.id);
                     }}
-                    title="查看地图和路线"
+                    title={t('myTrips.viewMapTooltip')}
                   >
                     <MapPin className="w-4 h-4 text-green-500" />
                   </Button>
@@ -368,13 +363,13 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
                     className="flex-1"
                     onClick={() => handleViewDetail(trip.id)}
                   >
-                    查看详情
+                    {t('common.viewDetail')}
                   </Button>
                   <Button
                     className="flex-1 bg-red-500 hover:bg-red-600"
                     onClick={() => handleViewDetail(trip.id)}
                   >
-                    {trip.source === 'forked' ? '继续修改' : '继续规划'}
+                    {trip.source === 'forked' ? t('myTrips.continueEdit') : t('myTrips.continuePlanning')}
                     <ChevronRight className="w-4 h-4 ml-1" />
                   </Button>
                 </div>
@@ -387,13 +382,13 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
         {trips.length === 0 && (
           <div className="bg-white rounded-xl p-12 text-center">
             <MapPin className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-gray-900 mb-2">还没有行程</h3>
+            <h3 className="text-gray-900 mb-2">{t('myTrips.noTrips')}</h3>
             <p className="text-sm text-gray-500 mb-6">
-              创建你的第一个行程计划吧
+              {t('myTrips.noTripsHint')}
             </p>
             <Button className="bg-red-500 hover:bg-red-600">
               <Plus className="w-4 h-4 mr-2" />
-              创建行程
+              {t('trip.create')}
             </Button>
           </div>
         )}
@@ -431,11 +426,7 @@ export function MyTripsPage({ onNavigateToPlanner, onContinueChat, openMapTripId
             budget: shareTrip.budget,
             image: shareTrip.image,
             days: parseInt(shareTrip.duration),
-            highlights: [
-              'Explore iconic landmarks',
-              'Taste authentic local cuisine',
-              'Experience vibrant culture',
-            ],
+            highlights: t('myTrips.highlights', { returnObjects: true }) as string[],
           }}
           onClose={() => setShareTrip(null)}
         />

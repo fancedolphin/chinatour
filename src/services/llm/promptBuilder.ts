@@ -10,6 +10,7 @@ import {
   sortCandidatesByTrust,
   summarizeSourceTrust,
 } from '@/services/llm/promptSafety';
+import { getCurrentLocale } from '@/i18n';
 
 type PromptBuilderInput = {
   intent: PlanningIntent;
@@ -122,8 +123,15 @@ export function buildNarrativePrompt(input: PromptBuilderInput): string {
     .filter(Boolean)
     .join('\n- ');
 
+  const locale = getCurrentLocale();
+  const outputLanguageDirective =
+    locale === 'en'
+      ? 'Output Language\n- Write the narrative reply in English. For Chinese place names, include the original characters in parentheses on first mention (e.g., "West Lake (西湖)").'
+      : 'Output Language\n- 用中文撰写叙述性回复，保持自然亲切的语气。';
+
   const blocks = [
     `System Goal\n${SYSTEM_RULES}`,
+    outputLanguageDirective,
     `Intent
 - destination=${sanitizePromptField(input.intent.destination, 24)}
 - durationDays=${input.intent.durationDays}

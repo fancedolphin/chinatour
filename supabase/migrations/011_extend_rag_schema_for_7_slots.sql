@@ -281,8 +281,8 @@ BEGIN
   RETURN QUERY
   SELECT
     it.id,
-    it.name,
-    it.category,
+    it.name::text,
+    it.category::text,
     it.description,
     it.address,
     it.experience_description,

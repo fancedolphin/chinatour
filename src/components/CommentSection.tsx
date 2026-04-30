@@ -6,6 +6,8 @@ import { Textarea } from './ui/textarea';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { useAuthContext } from '@/presentation/context/AuthContext';
 import { commentService, type CommentWithAuthor } from '@/services/commentService';
+import { useT } from '@/i18n/useT';
+import i18n from '@/i18n';
 
 interface CommentSectionProps {
   sharedTripId: string;
@@ -13,6 +15,7 @@ interface CommentSectionProps {
 }
 
 export function CommentSection({ sharedTripId, onCommentsCountChange }: CommentSectionProps) {
+  const { t } = useT();
   const { currentUser } = useAuthContext();
   const [comments, setComments] = useState<CommentWithAuthor[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,7 +33,7 @@ export function CommentSection({ sharedTripId, onCommentsCountChange }: CommentS
       const data = await commentService.getComments(sharedTripId, currentUser?.id);
       setComments(data);
     } catch (err) {
-      console.error('[CommentSection] 加载评论失败:', err);
+      console.error('[CommentSection] load comments failed:', err);
     } finally {
       setLoading(false);
     }
@@ -43,13 +46,13 @@ export function CommentSection({ sharedTripId, onCommentsCountChange }: CommentS
 
   const handleSubmit = async () => {
     if (!currentUser) {
-      toast.error('请先登录');
+      toast.error(t('comments.loginRequired'));
       return;
     }
     const content = newComment.trim();
     if (!content) return;
     if (content.length > 500) {
-      toast.error('评论不能超过 500 字');
+      toast.error(t('comments.tooLong'));
       return;
     }
 
@@ -65,9 +68,9 @@ export function CommentSection({ sharedTripId, onCommentsCountChange }: CommentS
       setReplyTo(null);
       await loadComments();
       onCommentsCountChange?.(totalCount + 1);
-      toast.success('评论成功');
-    } catch (err) {
-      toast.error('评论失败');
+      toast.success(t('comments.submitSuccess'));
+    } catch {
+      toast.error(t('comments.submitFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -79,15 +82,15 @@ export function CommentSection({ sharedTripId, onCommentsCountChange }: CommentS
       await commentService.deleteComment(commentId, currentUser.id);
       await loadComments();
       onCommentsCountChange?.(Math.max(0, totalCount - 1));
-      toast.success('已删除');
+      toast.success(t('comments.deleted'));
     } catch {
-      toast.error('删除失败');
+      toast.error(t('comments.deleteFailed'));
     }
   };
 
   const handleToggleLike = async (commentId: string) => {
     if (!currentUser) {
-      toast.error('请先登录');
+      toast.error(t('comments.loginRequired'));
       return;
     }
     try {
@@ -96,21 +99,21 @@ export function CommentSection({ sharedTripId, onCommentsCountChange }: CommentS
         updateCommentLike(prev, commentId, liked)
       );
     } catch {
-      toast.error('操作失败');
+      toast.error(t('comments.actionFailed'));
     }
   };
 
   return (
     <div id="comments" className="bg-white rounded-xl p-4">
       <h3 className="text-lg font-medium text-gray-900 mb-4">
-        评论 ({totalCount})
+        {t('comments.title', { count: totalCount })}
       </h3>
 
-      {/* 评论输入框 */}
+      {/* Input */}
       <div className="mb-6">
         {replyTo && (
           <div className="flex items-center gap-2 mb-2 text-sm text-gray-500">
-            <span>回复 @{replyTo.authorName}</span>
+            <span>{t('comments.replyTo', { name: replyTo.authorName })}</span>
             <button
               onClick={() => setReplyTo(null)}
               className="text-gray-400 hover:text-gray-600"
@@ -123,7 +126,7 @@ export function CommentSection({ sharedTripId, onCommentsCountChange }: CommentS
           <Textarea
             value={newComment}
             onChange={(e) => setNewComment(e.target.value)}
-            placeholder={currentUser ? '写下你的评论...' : '登录后即可评论'}
+            placeholder={currentUser ? t('comments.placeholder') : t('comments.placeholderLocked')}
             className="flex-1 resize-none min-h-[80px]"
             maxLength={500}
             disabled={!currentUser}
@@ -144,7 +147,7 @@ export function CommentSection({ sharedTripId, onCommentsCountChange }: CommentS
             ) : (
               <Send className="w-4 h-4" />
             )}
-            发送
+            {t('comments.send')}
           </Button>
         </div>
       </div>
@@ -163,7 +166,7 @@ export function CommentSection({ sharedTripId, onCommentsCountChange }: CommentS
           ))}
         </div>
       ) : comments.length === 0 ? (
-        <p className="text-center text-gray-400 py-8">暂无评论，来发表第一条吧</p>
+        <p className="text-center text-gray-400 py-8">{t('comments.empty')}</p>
       ) : (
         <div className="space-y-4">
           {comments.map((comment) => (
@@ -243,7 +246,7 @@ function CommentItem({
               className="flex items-center gap-1 text-xs text-gray-400 hover:text-blue-500 transition-colors"
             >
               <Reply className="w-3.5 h-3.5" />
-              回复
+              {i18n.t('comments.reply')}
             </button>
           )}
 
@@ -253,7 +256,7 @@ function CommentItem({
               className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 transition-colors"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              删除
+              {i18n.t('comments.delete')}
             </button>
           )}
         </div>
@@ -306,9 +309,10 @@ function formatTimeAgo(dateStr: string): string {
   const date = new Date(dateStr).getTime();
   const diff = Math.floor((now - date) / 1000);
 
-  if (diff < 60) return '刚刚';
-  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
-  if (diff < 2592000) return `${Math.floor(diff / 86400)} 天前`;
-  return new Date(dateStr).toLocaleDateString('zh-CN');
+  if (diff < 60) return i18n.t('comments.justNow');
+  if (diff < 3600) return i18n.t('comments.minutesAgo', { count: Math.floor(diff / 60) });
+  if (diff < 86400) return i18n.t('comments.hoursAgo', { count: Math.floor(diff / 3600) });
+  if (diff < 2592000) return i18n.t('comments.daysAgo', { count: Math.floor(diff / 86400) });
+  const localeTag = i18n.language === 'en' ? 'en-US' : 'zh-CN';
+  return new Date(dateStr).toLocaleDateString(localeTag);
 }

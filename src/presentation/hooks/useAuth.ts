@@ -8,6 +8,48 @@ import { supabase } from '@/utils/supabase/client';
 import { User } from '../../domain/entities/User';
 import { supabaseUserToEntity, getCurrentUserEntity } from '../adapters/userAdapter';
 
+const TEMPORARY_AUTH_ERROR_MESSAGE = '认证服务暂时不可用，请稍后重试';
+const EMAIL_LOGIN_ONLY_MESSAGE = '当前仅支持邮箱登录，请输入完整邮箱地址';
+const TRANSIENT_AUTH_ERROR_PATTERNS = [
+  'Database error querying schema',
+  'terminating connection due to administrator command',
+  'Failed to fetch',
+  'network',
+];
+
+function isEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function isTransientAuthError(error?: { message?: string; status?: number } | null): boolean {
+  if (!error) {
+    return false;
+  }
+
+  if (error.status === 500) {
+    return true;
+  }
+
+  const message = error.message?.toLowerCase() ?? '';
+  return TRANSIENT_AUTH_ERROR_PATTERNS.some((pattern) => message.includes(pattern.toLowerCase()));
+}
+
+function mapAuthErrorMessage(error?: { message?: string; status?: number } | null): string {
+  if (!error?.message) {
+    return '登录失败';
+  }
+
+  if (isTransientAuthError(error)) {
+    return TEMPORARY_AUTH_ERROR_MESSAGE;
+  }
+
+  return error.message;
+}
+
+async function wait(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * 认证Hook
  */
@@ -40,23 +82,43 @@ export function useAuth() {
    * 登录（邮箱 + 密码）
    * 直接使用 Supabase Auth 的 signInWithPassword
    */
-  const login = async (username: string, password: string) => {
+  const login = async (identifier: string, password: string) => {
     setLoading(true);
     setError(null);
 
     try {
-      console.log('[useAuth] 执行登录:', username);
+      const email = identifier.trim();
+
+      console.log('[useAuth] 执行登录:', email);
+
+      if (!isEmail(email)) {
+        console.log('[useAuth] 登录失败: 非邮箱登录标识');
+        setError(EMAIL_LOGIN_ONLY_MESSAGE);
+        return { success: false, error: EMAIL_LOGIN_ONLY_MESSAGE };
+      }
 
       // 直接使用邮箱进行 Supabase Auth 登录
-      const { data, error: authError } = await supabase.auth.signInWithPassword({
-        email: username,  // username 参数实际是邮箱
+      let signInResult = await supabase.auth.signInWithPassword({
+        email,
         password: password,
       });
 
+      if (isTransientAuthError(signInResult.error)) {
+        console.warn('[useAuth] 登录遇到临时错误，准备重试一次:', signInResult.error?.message);
+        await wait(400);
+        signInResult = await supabase.auth.signInWithPassword({
+          email,
+          password: password,
+        });
+      }
+
+      const { data, error: authError } = signInResult;
+
       if (authError) {
+        const errorMessage = mapAuthErrorMessage(authError);
         console.log('[useAuth] 登录失败:', authError.message);
-        setError(authError.message);
-        return { success: false, error: authError.message };
+        setError(errorMessage);
+        return { success: false, error: errorMessage };
       }
 
       if (data.user) {
@@ -68,7 +130,9 @@ export function useAuth() {
 
       return { success: false, error: 'Unknown error' };
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Login failed';
+      const errorMsg = mapAuthErrorMessage(
+        err instanceof Error ? { message: err.message } : { message: 'Login failed' }
+      );
       console.error('[useAuth] 登录异常:', errorMsg);
       setError(errorMsg);
       return { success: false, error: errorMsg };

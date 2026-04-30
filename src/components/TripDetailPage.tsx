@@ -15,6 +15,8 @@ import { supabase } from '@/utils/supabase/client';
 import { tripService, type TripDetail } from '@/services/tripService';
 import { downloadTripPDF } from '@/services/exportService';
 import { amapService } from '@/services/amapService';
+import { useT } from '@/i18n/useT';
+import { formatDuration as fmtDuration } from '@/utils/formatters';
 
 interface Activity {
   id: string;
@@ -67,6 +69,7 @@ interface TripDetailPageProps {
 }
 
 export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProps) {
+  const { t } = useT();
   const [expandedDays, setExpandedDays] = useState<number[]>([1]);
   const [currentView, setCurrentView] = useState<'itinerary' | 'budget'>('itinerary');
   const [showShareModal, setShowShareModal] = useState(false);
@@ -238,7 +241,7 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
           itineraryCount: data.trip_itineraries?.length || 0,
         });
       } catch (err) {
-        const message = err instanceof Error ? err.message : '加载行程失败';
+        const message = err instanceof Error ? err.message : t('tripDetail.loadFailed');
         console.error('[TripDetailPage] Failed to load trip:', message);
         setError(message);
       } finally {
@@ -306,9 +309,7 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
     const seconds = Number(duration || 0);
     if (!Number.isFinite(seconds) || seconds <= 0) return '';
     const minutes = Math.max(1, Math.round(seconds / 60));
-    const hours = Math.floor(minutes / 60);
-    const remain = minutes % 60;
-    return hours ? `${hours}小时${remain ? `${remain}分钟` : ''}` : `${minutes}分钟`;
+    return fmtDuration(minutes);
   };
 
   const parsePoiLocation = (location?: string) => {
@@ -336,6 +337,7 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
 
   const findPoiForActivity = async (activity: Activity, city: string) => {
     const keyword = activity.name;
+    // Stable AMap POI type categories — these are AMap API enum values, not user-visible strings.
     const typeMap: Record<Activity['type'], string | undefined> = {
       meal: '餐饮服务',
       attraction: '风景名胜',
@@ -513,7 +515,7 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
           if (cancelled) continue;
           console.error('[TripDetailPage] Amap enhancement failed', err);
           setEnhancedActivities((prev) => ({ ...prev, [activity.id]: buildBaseDetail(activity) }));
-          setEnhancedErrors((prev) => ({ ...prev, [activity.id]: '高德数据暂不可用' }));
+          setEnhancedErrors((prev) => ({ ...prev, [activity.id]: t('tripDetail.amapUnavailable') }));
         } finally {
           if (cancelled) continue;
           setEnhancedLoading((prev) => ({ ...prev, [activity.id]: false }));
@@ -567,10 +569,10 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Badge variant="secondary" className="bg-blue-50 text-blue-700">
-              高德增强
+              {t('tripDetail.amapEnhanced')}
             </Badge>
             <span className="text-xs text-gray-500">
-              {detail?.dataSource === 'mixed' ? 'AI + 高德' : detail?.dataSource === 'amap' ? '高德数据' : 'AI数据'}
+              {detail?.dataSource === 'mixed' ? t('tripDetail.dataSourceMixed') : detail?.dataSource === 'amap' ? t('tripDetail.dataSourceAmap') : t('tripDetail.dataSourceAi')}
             </span>
           </div>
           {isLoading && <Loader2 className="w-4 h-4 animate-spin text-red-500" />}
@@ -589,7 +591,7 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
               <div className="flex items-start gap-2">
                 <MapPin className="w-4 h-4 text-gray-400 mt-0.5" />
                 <div>
-                  <div className="text-xs text-gray-500">地址</div>
+                  <div className="text-xs text-gray-500">{t('tripDetail.fieldAddress')}</div>
                   <div className="text-gray-800">{detail.address}</div>
                 </div>
               </div>
@@ -623,7 +625,7 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
               <div className="flex items-start gap-2">
                 <Clock className="w-4 h-4 text-gray-400 mt-0.5" />
                 <div>
-                  <div className="text-xs text-gray-500">开放时间</div>
+                  <div className="text-xs text-gray-500">{t('tripDetail.fieldHours')}</div>
                   <div className="text-gray-800">{detail.opentime}</div>
                 </div>
               </div>
@@ -640,7 +642,7 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
               <div>
                 <div className="flex items-center gap-2 text-xs text-gray-500">
                   <ImageIcon className="w-4 h-4" />
-                  <span>实景照片</span>
+                  <span>{t('tripDetail.photos')}</span>
                 </div>
                 <div className="mt-2 grid grid-cols-3 gap-2">
                   {detail.photos.slice(0, 6).map((photo, index) => (
@@ -659,7 +661,7 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
               <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
                 <div className="flex items-center gap-2 text-sm text-gray-800">
                   <Route className="w-4 h-4 text-purple-500" />
-                  <span>{detail.route.distance || '步行路线'}{detail.route.duration ? ` · ${detail.route.duration}` : ''}</span>
+                  <span>{detail.route.distance || t('tripDetail.walkingRoute')}{detail.route.duration ? ` · ${detail.route.duration}` : ''}</span>
                 </div>
                 {routeSteps.length > 0 && (
                   <div className="mt-2 space-y-1">
@@ -681,17 +683,17 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
 
   const handleExport = async () => {
     if (!dbTripData) {
-      toast.error('行程数据尚未加载完成');
+      toast.error(t('tripDetail.exportNotReady'));
       return;
     }
 
     try {
       setIsExporting(true);
       await downloadTripPDF(dbTripData);
-      toast.success('PDF 已开始下载');
+      toast.success(t('tripDetail.pdfDownloading'));
     } catch (exportError) {
       console.error('[TripDetailPage] 导出 PDF 失败:', exportError);
-      toast.error(exportError instanceof Error ? exportError.message : '导出 PDF 失败');
+      toast.error(exportError instanceof Error ? exportError.message : t('tripDetail.pdfFailed'));
     } finally {
       setIsExporting(false);
     }
@@ -735,10 +737,10 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
         setRestaurantDetail({
           name: selectedActivity.name,
           nameEn: selectedActivity.name,
-          address: selectedActivity.address || '地址未提供',
-          hours: '营业时间未提供',
-          cuisine: '精选美食',
-          priceRange: selectedActivity.price || '价格未提供',
+          address: selectedActivity.address || t('tripDetail.fallbackAddress'),
+          hours: t('tripDetail.fallbackHours'),
+          cuisine: t('tripDetail.fallbackCuisine'),
+          priceRange: selectedActivity.price || t('tripDetail.fallbackPriceRange'),
           signature: [],
           menuImage: selectedActivity.image,
         });
@@ -764,15 +766,15 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
             setAttractionDetail({
               name: data.name,
               nameEn: data.name_en || data.name,
-              address: data.address || selectedActivity.address || '地址未提供',
+              address: data.address || selectedActivity.address || t('tripDetail.fallbackAddress'),
               hours:
                 (typeof data.opening_hours === 'string'
                   ? data.opening_hours
-                  : undefined) || '开放时间未提供',
-              ticketPrice: data.ticket_price || selectedActivity.price || '免费',
-              description: data.description || selectedActivity.description || '暂无描述',
-              highlights: highlights.length ? highlights : ['适合拍照打卡'],
-              tips: tips.length ? tips : ['建议提前在线购票'],
+                  : undefined) || t('tripDetail.fallbackOpening'),
+              ticketPrice: data.ticket_price || selectedActivity.price || t('tripDetail.fallbackTicketFree'),
+              description: data.description || selectedActivity.description || t('tripDetail.fallbackDescription'),
+              highlights: highlights.length ? highlights : [t('tripDetail.highlightPhotoSpot')],
+              tips: tips.length ? tips : [t('tripDetail.tipBookOnline')],
               images: gallery.length
                 ? gallery
                 : selectedActivity.image
@@ -781,7 +783,7 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
               estimatedDuration:
                 data.estimated_duration ||
                 selectedActivity.duration ||
-                '2小时',
+                t('tripDetail.defaultDuration'),
             });
             return;
           }
@@ -790,22 +792,22 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
         setAttractionDetail({
           name: selectedActivity.name,
           nameEn: selectedActivity.name,
-          address: selectedActivity.address || '地址未提供',
+          address: selectedActivity.address || t('tripDetail.fallbackAddress'),
           hours: '09:00-18:00',
-          ticketPrice: selectedActivity.price || '免费',
-          description: selectedActivity.description || '暂无描述',
+          ticketPrice: selectedActivity.price || t('tripDetail.fallbackTicketFree'),
+          description: selectedActivity.description || t('tripDetail.fallbackDescription'),
           highlights: [
-            '适合拍照打卡',
-            '交通便利',
-            '周边配套完善',
+            t('tripDetail.highlightPhotoSpot'),
+            t('tripDetail.highlightTransport'),
+            t('tripDetail.highlightAmenities'),
           ],
           tips: [
-            '建议游览时长：' + (selectedActivity.duration || '2小时'),
-            '建议提前在线购票',
-            '注意开放时间',
+            t('tripDetail.tipDuration', { value: selectedActivity.duration || t('tripDetail.defaultDuration') }),
+            t('tripDetail.tipBookOnline'),
+            t('tripDetail.tipMindHours'),
           ],
           images: selectedActivity.image ? [selectedActivity.image] : [],
-          estimatedDuration: selectedActivity.duration || '2小时',
+          estimatedDuration: selectedActivity.duration || t('tripDetail.defaultDuration'),
         });
       }
 
@@ -852,8 +854,8 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
         }
 
         setTransportDetail({
-          from: '起点',
-          to: '终点',
+          from: t('tripDetail.from'),
+          to: t('tripDetail.to'),
           subway: undefined,
           taxi: undefined,
         });
@@ -869,7 +871,7 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <Loader2 className="w-12 h-12 text-red-500 animate-spin mx-auto mb-4" />
-          <p className="text-gray-600">加载行程中...</p>
+          <p className="text-gray-600">{t('tripDetail.loadingTrip')}</p>
         </div>
       </div>
     );
@@ -881,14 +883,14 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
         <div className="text-center max-w-md">
           <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">加载失败</h2>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">{t('tripDetail.loadFailedTitle')}</h2>
           <p className="text-gray-600 mb-6">{error}</p>
           <div className="flex gap-3 justify-center">
             <Button variant="outline" onClick={onBack}>
-              返回
+              {t('tripDetail.back')}
             </Button>
             <Button onClick={() => window.location.reload()}>
-              重试
+              {t('tripDetail.retry')}
             </Button>
           </div>
         </div>
@@ -906,7 +908,7 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
               <button onClick={onBack} className="p-1">
                 <ChevronLeft className="w-6 h-6 text-gray-700" />
               </button>
-              <h1 className="text-gray-900">行程详情</h1>
+              <h1 className="text-gray-900">{t('tripDetail.header')}</h1>
             </div>
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="sm" onClick={handleShare}>
@@ -954,7 +956,7 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
           onClick={onOpenMap}
         >
           <Map className="w-5 h-5 mr-2" />
-          查看地图与路线
+          {t('tripDetail.openMapButton')}
         </Button>
       </div>
 
@@ -962,8 +964,8 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
       <div className="max-w-screen-xl mx-auto px-4">
         <Tabs value={currentView} onValueChange={(v) => setCurrentView(v as any)} className="w-full">
           <TabsList className="w-full grid grid-cols-2 bg-white rounded-xl p-1 mb-4">
-            <TabsTrigger value="itinerary">行程安排</TabsTrigger>
-            <TabsTrigger value="budget">预算明细</TabsTrigger>
+            <TabsTrigger value="itinerary">{t('tripDetail.tabItinerary')}</TabsTrigger>
+            <TabsTrigger value="budget">{t('tripDetail.tabBudget')}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="itinerary" className="space-y-3">
@@ -1062,56 +1064,55 @@ export function TripDetailPage({ tripId, onBack, onOpenMap }: TripDetailPageProp
 
           <TabsContent value="budget" className="space-y-3">
             <Card className="p-4">
-              <h3 className="text-gray-900 mb-4">预算概览</h3>
+              <h3 className="text-gray-900 mb-4">{t('tripDetail.budget.overview')}</h3>
               <div className="space-y-3">
                 <div className="flex items-center justify-between py-2 border-b border-gray-100">
                   <div className="flex items-center gap-2">
                     <Camera className="w-4 h-4 text-blue-500" />
-                    <span className="text-gray-700">景点门票</span>
+                    <span className="text-gray-700">{t('tripDetail.budget.tickets')}</span>
                   </div>
                   <span className="text-gray-900">£450</span>
                 </div>
                 <div className="flex items-center justify-between py-2 border-b border-gray-100">
                   <div className="flex items-center gap-2">
                     <Utensils className="w-4 h-4 text-orange-500" />
-                    <span className="text-gray-700">餐饮</span>
+                    <span className="text-gray-700">{t('tripDetail.budget.meals')}</span>
                   </div>
                   <span className="text-gray-900">£800</span>
                 </div>
                 <div className="flex items-center justify-between py-2 border-b border-gray-100">
                   <div className="flex items-center gap-2">
                     <MapPin className="w-4 h-4 text-purple-500" />
-                    <span className="text-gray-700">交通</span>
+                    <span className="text-gray-700">{t('tripDetail.budget.transport')}</span>
                   </div>
                   <span className="text-gray-900">£350</span>
                 </div>
                 <div className="flex items-center justify-between py-2 border-b border-gray-100">
                   <div className="flex items-center gap-2">
                     <MapPin className="w-4 h-4 text-green-500" />
-                    <span className="text-gray-700">住宿</span>
+                    <span className="text-gray-700">{t('tripDetail.budget.accommodation')}</span>
                   </div>
                   <span className="text-gray-900">£1,200</span>
                 </div>
                 <div className="flex items-center justify-between py-2 border-b border-gray-100">
                   <div className="flex items-center gap-2">
-                    <span className="text-gray-700">其他</span>
+                    <span className="text-gray-700">{t('tripDetail.budget.others')}</span>
                   </div>
                   <span className="text-gray-900">£700</span>
                 </div>
                 <div className="flex items-center justify-between pt-3 border-t-2 border-gray-200">
-                  <span className="text-gray-900">总计</span>
+                  <span className="text-gray-900">{t('tripDetail.budget.total')}</span>
                   <span className="text-red-500">{actualTripData.budget}</span>
                 </div>
               </div>
             </Card>
 
             <Card className="p-4 bg-gradient-to-r from-orange-50 to-yellow-50">
-              <h4 className="text-gray-900 text-sm mb-2">💡 省钱小贴士</h4>
+              <h4 className="text-gray-900 text-sm mb-2">{t('tripDetail.budget.tipsTitle')}</h4>
               <ul className="text-xs text-gray-600 space-y-1">
-                <li>• 大英博物馆等多个博物馆免费参观</li>
-                <li>• 使用Oyster卡可节省20%交通费用</li>
-                <li>• 提前预订景点门票可享折扣</li>
-                <li>• 午餐时段用餐比晚餐更实惠</li>
+                {(t('tripDetail.budget.tips', { returnObjects: true }) as string[]).map((tip, idx) => (
+                  <li key={idx}>• {tip}</li>
+                ))}
               </ul>
             </Card>
           </TabsContent>

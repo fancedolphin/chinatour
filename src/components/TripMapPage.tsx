@@ -14,6 +14,8 @@ import type { ExportApp } from './map/ExportScopeSheet';
 import { buildExportScopes, exportToAMap, exportToGoogleMaps, exportToAppleMaps } from '../utils/mapExport';
 import type { ExportScope } from '../utils/mapExport';
 import { supabase } from '../utils/supabase/client';
+import i18n from '@/i18n';
+import { useT } from '@/i18n/useT';
 
 declare global {
   interface Window {
@@ -31,18 +33,58 @@ interface CityCluster {
   locations: LocationPoint[];
 }
 
+type TripMapRenderableActivity = {
+  id: string;
+  name: string;
+  location_lat: number | null;
+  location_lng: number | null;
+  order_index: number | null;
+};
+
+export type TripMapRenderableTrip = {
+  id: string;
+  destination: string;
+  trip_itineraries: {
+    id: string;
+    day_number: number;
+    theme: string | null;
+    activities: TripMapRenderableActivity[];
+  }[];
+};
+
+export type TripMapPreviewPayload = {
+  trip: TripMapRenderableTrip;
+  locations: LocationPoint[];
+};
+
 interface TripMapPageProps {
-  tripId: string;
+  tripId?: string;
+  preview?: TripMapPreviewPayload;
   onBack: () => void;
+}
+
+// Locale-aware label helpers — prefer *_en when on English site, fall back to base.
+function displayName(loc: { name: string; nameEn?: string | null }): string {
+  return i18n.language === 'en' && loc.nameEn ? loc.nameEn : loc.name;
+}
+function displayCity(loc: { city: string; cityEn?: string | null }): string {
+  return i18n.language === 'en' && loc.cityEn ? loc.cityEn : loc.city;
+}
+function displayDistrict(loc: { district: string; districtEn?: string | null }): string {
+  return i18n.language === 'en' && loc.districtEn ? loc.districtEn : loc.district;
+}
+function displayAddress(loc: { address: string; addressEn?: string | null }): string {
+  return i18n.language === 'en' && loc.addressEn ? loc.addressEn : loc.address;
 }
 
 // Build city clusters from locations
 function buildClusters(locations: LocationPoint[]): CityCluster[] {
   const cityMap = new Map<string, LocationPoint[]>();
   locations.forEach(loc => {
-    const list = cityMap.get(loc.city) || [];
+    const cityKey = displayCity(loc);
+    const list = cityMap.get(cityKey) || [];
     list.push(loc);
-    cityMap.set(loc.city, list);
+    cityMap.set(cityKey, list);
   });
 
   const clusters: CityCluster[] = [];
@@ -71,7 +113,7 @@ function inferDayFromLocationOrder(location: LocationPoint, validDays: Set<numbe
 // falling back to the closest activity coordinate for older data.
 function assignLocationsToDays(
   locations: LocationPoint[],
-  tripDetail: TripDetail | null,
+  tripDetail: TripMapRenderableTrip | null,
 ): Map<string, number> {
   const locDayMap = new Map<string, number>();
   if (!tripDetail) return locDayMap;
@@ -163,40 +205,45 @@ function getStaticMapSize(container: HTMLDivElement | null): string {
   return `${width}*${height}`;
 }
 
-function getStaticMarkerLabel(location: LocationPoint, total: number): string {
-  if (location.order === 1) {
-    return '起';
+// `seq` is the 1-based sequential position in the sorted route (NOT the raw
+// location.order, which is encoded as `day*100+stop` and would render as "101").
+function getStaticMarkerLabel(seq: number, total: number): string {
+  if (seq === 1) {
+    return i18n.t('tripMap.markerStart');
   }
 
-  if (location.order === total) {
-    return '终';
+  if (seq === total) {
+    return i18n.t('tripMap.markerEnd');
   }
 
-  if (location.order <= 9) {
-    return String(location.order);
+  if (seq <= 9) {
+    return String(seq);
   }
 
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  return alphabet[(location.order - 10) % alphabet.length] || '途';
+  return alphabet[(seq - 10) % alphabet.length] || i18n.t('tripMap.markerVia');
 }
 
-function selectStaticMapMarkers(sortedLocations: LocationPoint[]): LocationPoint[] {
-  if (sortedLocations.length <= STATIC_MAP_MAX_MARKERS) {
-    return sortedLocations;
+function selectStaticMapMarkers(
+  sortedLocations: LocationPoint[],
+): Array<{ location: LocationPoint; seq: number }> {
+  const indexed = sortedLocations.map((location, idx) => ({ location, seq: idx + 1 }));
+  if (indexed.length <= STATIC_MAP_MAX_MARKERS) {
+    return indexed;
   }
 
-  const indexes = new Set<number>([0, sortedLocations.length - 1]);
+  const indexes = new Set<number>([0, indexed.length - 1]);
   const middleSlots = STATIC_MAP_MAX_MARKERS - 2;
 
   for (let i = 0; i < middleSlots; i += 1) {
     const ratio = (i + 1) / (middleSlots + 1);
-    const index = Math.round(ratio * (sortedLocations.length - 1));
-    indexes.add(Math.min(sortedLocations.length - 2, Math.max(1, index)));
+    const index = Math.round(ratio * (indexed.length - 1));
+    indexes.add(Math.min(indexed.length - 2, Math.max(1, index)));
   }
 
   return [...indexes]
     .sort((a, b) => a - b)
-    .map((index) => sortedLocations[index]);
+    .map((index) => indexed[index]);
 }
 
 function buildStaticMapUrl(
@@ -209,14 +256,15 @@ function buildStaticMapUrl(
   params.set('size', size);
   params.set('scale', '1');
 
+  const total = sortedLocations.length;
   const markers = selectStaticMapMarkers(sortedLocations)
-    .map((location) => {
-      const color = location.order === 1
+    .map(({ location, seq }) => {
+      const color = seq === 1
         ? '0x22C55E'
-        : location.order === sortedLocations.length
+        : seq === total
           ? '0x9333EA'
           : '0xEF4444';
-      const markerStyle = `mid,${color},${getStaticMarkerLabel(location, sortedLocations.length)}`;
+      const markerStyle = `mid,${color},${getStaticMarkerLabel(seq, total)}`;
       return `${markerStyle}:${formatLngLat(location.lng, location.lat)}`;
     })
     .join('|');
@@ -243,14 +291,16 @@ function triggerBlobDownload(blob: Blob, filename: string) {
 }
 
 // --- Main Component ---
-export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
+export function TripMapPage({ tripId, preview, onBack }: TripMapPageProps) {
+  const { t } = useT();
+  const isPreviewMode = Boolean(preview);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
   const [zoomLevel, setZoomLevel] = useState(8);
   const [selectedLocation, setSelectedLocation] = useState<LocationPoint | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [isFavorited, setIsFavorited] = useState(false);
-  const [locations, setLocations] = useState<LocationPoint[]>([]);
+  const [locations, setLocations] = useState<LocationPoint[]>(preview?.locations ?? []);
   const [locationsError, setLocationsError] = useState<string | null>(null);
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -262,10 +312,24 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
 
   // Day layer state
   const [activeLayer, setActiveLayer] = useState<LayerMode>('all');
-  const [tripDetail, setTripDetail] = useState<TripDetail | null>(null);
+  const [tripDetail, setTripDetail] = useState<TripMapRenderableTrip | null>(preview?.trip ?? null);
+
+  useEffect(() => {
+    if (!preview) {
+      return;
+    }
+
+    setTripDetail(preview.trip);
+    setLocations(preview.locations);
+    setLocationsError(null);
+  }, [preview]);
 
   // Fetch trip detail for itineraries / day grouping
   useEffect(() => {
+    if (isPreviewMode || !tripId) {
+      return;
+    }
+
     console.log('[TripMapPage] 开始加载行程详情, tripId:', tripId);
     tripService.getTripDetail(tripId)
       .then((detail) => {
@@ -274,7 +338,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
         setTripDetail(detail);
       })
       .catch((err) => console.error('[TripMapPage] 加载行程详情失败（图层功能降级）', err));
-  }, [tripId]);
+  }, [isPreviewMode, tripId]);
 
   // Build day groups from locations + itineraries
   const locDayMap = useMemo(() => {
@@ -305,7 +369,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     const groups = itineraries
       .map((itin) => ({
         day: itin.day_number,
-        label: itin.theme ?? `第${itin.day_number}天`,
+        label: itin.theme ?? t('tripMap.dayLabel', { day: itin.day_number }),
         locations: locations.filter((loc) => locDayMap.get(loc.id) === itin.day_number),
       }));
     console.log('[TripMapPage] dayGroups:', groups.map(g => ({ day: g.day, count: g.locations.length })));
@@ -340,19 +404,46 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     return group ? group.locations : locations;
   }, [activeLayer, dayGroups, locations]);
 
-  // Fetch locations from database
+  // Fetch locations from database (saved trip mode only)
   const loadLocations = useCallback(() => {
+    if (isPreviewMode) {
+      const raw = preview?.locations ?? [];
+      setLocations(raw);
+      setLocationsError(null);
+      return;
+    }
+
+    if (!tripId) {
+      setLocations([]);
+      setLocationsError(t('tripMap.missingTripInfo'));
+      return;
+    }
+
     setLocationsError(null);
     tripMapService.getLocationsByTripId(tripId)
       .then(setLocations)
       .catch((err) => {
         console.error('[TripMapPage] 加载地点失败', err);
-        setLocationsError('加载地点数据失败');
-        toast.error('加载地点数据失败');
+        setLocationsError(t('tripMap.loadLocationsFailed'));
+        toast.error(t('tripMap.loadLocationsFailed'));
       });
-  }, [tripId]);
+  }, [isPreviewMode, preview, tripId]);
 
   useEffect(() => { loadLocations(); }, [loadLocations]);
+
+  // Enrich preview locations with catalog data (dianpingUrl, videos, description) in background.
+  // Separate effect so cleanup can cancel the promise on unmount or when preview changes.
+  useEffect(() => {
+    if (!isPreviewMode) return;
+    const raw = preview?.locations ?? [];
+    if (raw.length === 0) return;
+
+    let cancelled = false;
+    tripMapService.enrichLocations(raw)
+      .then((enriched) => { if (!cancelled) setLocations(enriched); })
+      .catch((err) => console.warn('[TripMapPage] 预览地点富化失败（非致命）', err));
+    return () => { cancelled = true; };
+  }, [isPreviewMode, preview?.locations]);
 
   // Load AMap Script via Edge Function
   useEffect(() => {
@@ -364,7 +455,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     (async () => {
       const { apiKey, securityCode } = await resolveAMapConfig();
       if (!apiKey) {
-        setConfigError('未配置高德地图 API Key');
+        setConfigError(t('tripMap.configMissing'));
         return;
       }
 
@@ -372,9 +463,10 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
       window.initAMap = () => setMapLoaded(true);
 
       const script = document.createElement('script');
-      script.src = `https://webapi.amap.com/maps?v=1.4.15&key=${apiKey}&callback=initAMap`;
+      const amapLang = i18n.language === 'en' ? 'en' : 'zh_cn';
+      script.src = `https://webapi.amap.com/maps?v=1.4.15&key=${apiKey}&lang=${amapLang}&callback=initAMap`;
       script.async = true;
-      script.onerror = () => { toast.error('地图加载失败'); setConfigError('地图脚本加载失败'); };
+      script.onerror = () => { toast.error(t('tripMap.scriptLoadFailedToast')); setConfigError(t('tripMap.scriptLoadFailed')); };
       document.body.appendChild(script);
     })();
   }, []);
@@ -462,11 +554,13 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
 
     const sorted = [...visibleLocations].sort((a, b) => a.order - b.order);
 
-    sorted.forEach((loc) => {
-      const isFirst = loc.order === 1;
-      const isLast = loc.order === sorted.length;
+    sorted.forEach((loc, index) => {
+      // 1-based sequential label (loc.order is encoded as day*100+stop, so we can't use it directly)
+      const seq = index + 1;
+      const isFirst = seq === 1;
+      const isLast = seq === sorted.length;
       const bgColor = isFirst ? '#22c55e' : isLast ? '#9333ea' : '#ef4444';
-      const label = isFirst ? '起' : isLast ? '终' : `${loc.order}`;
+      const label = isFirst ? t('tripMap.markerStart') : isLast ? t('tripMap.markerEnd') : `${seq}`;
 
       const el = document.createElement('div');
       el.style.cssText = 'display:flex;flex-direction:column;align-items:center;pointer-events:none;';
@@ -507,18 +601,6 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
       try { mapRef.current?.setFitView(null, false, [60, 60, 60, 60]); } catch { }
     }, 200);
   }, [mapLoaded, locations]);
-
-  // Show/hide step markers based on zoom level
-  useEffect(() => {
-    if (!mapRef.current || !window.AMap || !mapLoaded) return;
-    if (selectedLocation) return;
-
-    if (zoomLevel >= ZOOM_THRESHOLD) {
-      renderStepMarkers();
-    } else {
-      clearStepMarkers();
-    }
-  }, [zoomLevel, mapLoaded, selectedLocation, visibleLocations, activeLayer, renderStepMarkers, clearStepMarkers]);
 
   // Render cluster markers (zoomed out)
   const renderClusters = useCallback(() => {
@@ -561,19 +643,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     if (!mapRef.current || !window.AMap) return;
     clearMarkers();
 
-    // Only show locations in the current viewport
-    const bounds = mapRef.current.getBounds();
-    const viewportLocations = visibleLocations.filter(loc => {
-      if (!bounds) return true;
-      try {
-        const ne = bounds.getNorthEast();
-        const sw = bounds.getSouthWest();
-        return loc.lat >= sw.getLat() && loc.lat <= ne.getLat() &&
-          loc.lng >= sw.getLng() && loc.lng <= ne.getLng();
-      } catch { return true; }
-    });
-
-    viewportLocations.forEach(loc => {
+    visibleLocations.forEach(loc => {
       const el = document.createElement('div');
       el.style.cssText = 'display:flex;flex-direction:column;align-items:center;cursor:pointer;';
 
@@ -586,7 +656,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
 
       el.innerHTML = `
         <div style="background:#fff1f2;border:2px solid #fb7185;border-radius:12px;padding:10px 12px;min-width:120px;box-shadow:0 2px 12px rgba(244,63,94,0.25);">
-          <div style="font-weight:700;font-size:14px;color:#1a1a1a;margin-bottom:4px;">${loc.name}</div>
+          <div style="font-weight:700;font-size:14px;color:#1a1a1a;margin-bottom:4px;">${displayName(loc)}</div>
           <div style="display:flex;align-items:center;gap:3px;margin-bottom:6px;">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
             <span style="font-size:12px;color:#ef4444;font-weight:600;">${loc.distance ?? ''}km</span>
@@ -636,17 +706,20 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
     });
   }, [clearMarkers, visibleLocations]);
 
-  // Update markers based on zoom level
+  // Update markers and step markers based on zoom level — merged into one effect
+  // to avoid double clear (clearMarkers + clearStepMarkers) causing flicker.
   useEffect(() => {
-    if (!mapRef.current || !window.AMap) return;
-    if (selectedLocation) return; // Don't update markers when detail view is open
+    if (!mapRef.current || !window.AMap || !mapLoaded) return;
+    if (selectedLocation) return;
 
     if (zoomLevel < ZOOM_THRESHOLD) {
+      clearStepMarkers();
       renderClusters();
     } else {
       renderLocationMarkers();
+      renderStepMarkers();
     }
-  }, [zoomLevel, mapLoaded, selectedLocation, visibleLocations, activeLayer, renderClusters, renderLocationMarkers]);
+  }, [zoomLevel, mapLoaded, selectedLocation, visibleLocations, activeLayer, renderClusters, renderLocationMarkers, renderStepMarkers, clearStepMarkers]);
 
   // Fit bounds when layer changes
   useEffect(() => {
@@ -705,7 +778,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
         <div className="absolute top-20 left-1/2 -translate-x-1/2 z-40 bg-white rounded-xl px-4 py-3 shadow-lg border border-red-100 flex items-center gap-3">
           <MapPin className="w-5 h-5 text-red-500 flex-shrink-0" />
           <span className="text-sm text-gray-700">{locationsError}</span>
-          <Button variant="outline" size="sm" onClick={loadLocations}>重试</Button>
+          <Button variant="outline" size="sm" onClick={loadLocations}>{t('common.retry')}</Button>
         </div>
       )}
 
@@ -716,16 +789,16 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
             {configError ? (
               <>
                 <MapPin className="w-10 h-10 text-gray-400 mb-4" />
-                <div className="text-gray-700 font-medium mb-2">地图配置错误</div>
+                <div className="text-gray-700 font-medium mb-2">{t('tripMap.configErrorTitle')}</div>
                 <div className="text-gray-400 text-sm text-center max-w-xs">
-                  请确保已设置 <code className="bg-gray-100 px-1 rounded">AMAP_JS_API_KEY</code> 和 <code className="bg-gray-100 px-1 rounded">AMAP_SECURITY_CODE</code>
+                  {t('tripMap.configErrorHint')} <code className="bg-gray-100 px-1 rounded">AMAP_JS_API_KEY</code> &amp; <code className="bg-gray-100 px-1 rounded">AMAP_SECURITY_CODE</code>
                 </div>
-                <Button variant="outline" className="mt-4" onClick={onBack}>返回</Button>
+                <Button variant="outline" className="mt-4" onClick={onBack}>{t('common.back')}</Button>
               </>
             ) : (
               <div className="animate-pulse flex flex-col items-center">
                 <MapPin className="w-10 h-10 text-red-500 mb-4" />
-                <div className="text-gray-500 font-medium">正在加载高德地图...</div>
+                <div className="text-gray-500 font-medium">{t('tripMap.amapLoading')}</div>
               </div>
             )}
           </div>
@@ -759,7 +832,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                     />
                   </svg>
                 </div>
-                <div className="text-gray-800 font-semibold text-lg">信息载入中...</div>
+                <div className="text-gray-800 font-semibold text-lg">{t('tripMap.infoLoading')}</div>
 
                 {/* Bottom Map Button */}
                 <div className="absolute bottom-24 left-1/2 -translate-x-1/2 flex flex-col items-center">
@@ -769,7 +842,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                   >
                     <MapIcon className="w-7 h-7 text-white" />
                   </button>
-                  <span className="text-sm text-gray-600 mt-2 font-medium">地图</span>
+                  <span className="text-sm text-gray-600 mt-2 font-medium">{t('tripMap.mapLabel')}</span>
                   
                 </div>
               </div>
@@ -788,45 +861,49 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                 <div className="px-5 pt-14 pb-5 bg-gradient-to-b from-red-50 to-white">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
-                      <h1 className="text-2xl font-bold text-gray-900 mb-4">{selectedLocation.name}</h1>
+                      <h1 className="text-2xl font-bold text-gray-900 mb-4">{displayName(selectedLocation)}</h1>
                       <div className="flex items-center gap-1 text-gray-500 text-sm mb-1">
                         <MapPin className="w-3.5 h-3.5 text-red-500" />
-                        <span>{selectedLocation.city} · {selectedLocation.district}</span>
+                        <span>{displayCity(selectedLocation)} · {displayDistrict(selectedLocation)}</span>
                       </div>
                       <div className="text-gray-800 font-medium text-base mb-3">
-                        {selectedLocation.address}
+                        {displayAddress(selectedLocation)}
                       </div>
                       <div className="flex items-center gap-1 text-gray-500 text-sm">
                         <Navigation className="w-3.5 h-3.5 text-red-500" />
-                        <span>距我 {selectedLocation.distance} 公里</span>
+                        <span>{t('tripMap.distanceFromMe', { value: selectedLocation.distance })}</span>
                       </div>
                     </div>
 
                     {/* Right side actions */}
                     <div className="flex flex-col items-center gap-4 ml-4">
-                      {/* Dianping Icon */}
-                      <button
-                        className="flex flex-col items-center"
-                        onClick={() => toast.success('即将跳转大众点评')}
-                      >
-                        <div className="w-12 h-12 rounded-full bg-red-500 flex items-center justify-center shadow-md">
-                          <ExternalLink className="w-5 h-5 text-white" />
-                        </div>
-                        <span className="text-xs text-gray-500 mt-1">大众点评</span>
-                      </button>
+                      {/* Dianping Icon (restaurants only) */}
+                      {selectedLocation.type === 'restaurant' && selectedLocation.dianpingUrl && (
+                        <button
+                          className="flex flex-col items-center"
+                          onClick={() =>
+                            window.open(selectedLocation.dianpingUrl, '_blank', 'noopener,noreferrer')
+                          }
+                        >
+                          <div className="w-12 h-12 rounded-full bg-red-500 flex items-center justify-center shadow-md">
+                            <ExternalLink className="w-5 h-5 text-white" />
+                          </div>
+                          <span className="text-xs text-gray-500 mt-1">{t('tripMap.dianping')}</span>
+                        </button>
+                      )}
 
                       {/* Favorite */}
                       <button
                         className="flex flex-col items-center"
                         onClick={() => {
                           setIsFavorited(!isFavorited);
-                          toast.success(isFavorited ? '已取消收藏' : '已加入收藏');
+                          toast.success(isFavorited ? t('tripMap.favoriteRemoved') : t('tripMap.favoriteAdded'));
                         }}
                       >
                         <div className={`w-12 h-12 rounded-full flex items-center justify-center shadow-md border ${isFavorited ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
                           <Heart className={`w-5 h-5 ${isFavorited ? 'text-red-500 fill-red-500' : 'text-gray-400'}`} />
                         </div>
-                        <span className="text-xs text-gray-500 mt-1">收藏</span>
+                        <span className="text-xs text-gray-500 mt-1">{t('tripMap.favoriteLabel')}</span>
                       </button>
                     </div>
                   </div>
@@ -835,6 +912,24 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                 {/* Divider */}
                 <div className="h-2 bg-gray-50" />
 
+                {/* Attraction description (attractions only) */}
+                {selectedLocation.type === 'attraction' && selectedLocation.description && (
+                  <>
+                    <div className="px-5 py-5">
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="w-6 h-6 rounded bg-red-100 flex items-center justify-center">
+                          <MapPin className="w-3.5 h-3.5 text-red-500" />
+                        </div>
+                        <h2 className="text-lg font-bold text-gray-900">{t('tripMap.introTitle')}</h2>
+                      </div>
+                      <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                        {selectedLocation.description}
+                      </p>
+                    </div>
+                    <div className="h-2 bg-gray-50" />
+                  </>
+                )}
+
                 {/* Videos Section */}
                 {selectedLocation.videos.length > 0 && (
                   <div className="px-5 py-5">
@@ -842,7 +937,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                       <div className="w-6 h-6 rounded bg-red-100 flex items-center justify-center">
                         <Play className="w-3.5 h-3.5 text-red-500 fill-red-500" />
                       </div>
-                      <h2 className="text-lg font-bold text-gray-900">探店视频</h2>
+                      <h2 className="text-lg font-bold text-gray-900">{t('tripMap.videosTitle')}</h2>
                     </div>
 
                     <div className="flex flex-col gap-4">
@@ -850,7 +945,13 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                         <div
                           key={idx}
                           className="flex gap-3 p-3 bg-gray-50 rounded-xl hover:bg-red-50 transition-colors cursor-pointer"
-                          onClick={() => toast.success('即将播放视频')}
+                          onClick={() => {
+                            if (video.videoUrl) {
+                              window.open(video.videoUrl, '_blank', 'noopener,noreferrer');
+                            } else {
+                              toast.error(t('tripMap.videoMissing'));
+                            }
+                          }}
                         >
                           {/* Thumbnail */}
                           <div className="relative w-28 h-20 rounded-lg overflow-hidden flex-shrink-0">
@@ -877,9 +978,21 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                               <span className="text-xs text-gray-600 font-medium">{video.authorName}</span>
                               <span className="text-xs text-gray-400">{video.date}</span>
                               {/* Platform icon */}
-                              <div className={`w-4 h-4 rounded-full flex items-center justify-center ${video.platform === 'douyin' ? 'bg-black' : 'bg-red-500'}`}>
+                              <div
+                                className={`w-4 h-4 rounded-full flex items-center justify-center ${
+                                  video.platform === 'douyin'
+                                    ? 'bg-black'
+                                    : video.platform === 'bilibili'
+                                      ? 'bg-pink-500'
+                                      : 'bg-red-500'
+                                }`}
+                              >
                                 <span className="text-white text-[8px] font-bold">
-                                  {video.platform === 'douyin' ? '抖' : '红'}
+                                  {video.platform === 'douyin'
+                                    ? t('tripMap.platformShortDouyin')
+                                    : video.platform === 'bilibili'
+                                      ? t('tripMap.platformShortBili')
+                                      : t('tripMap.platformShortXhs')}
                                 </span>
                               </div>
                             </div>
@@ -900,10 +1013,10 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                     <div className="px-5 py-5">
                       <div className="flex items-center gap-2 mb-4">
                         <div className="w-6 h-6 rounded bg-red-500 flex items-center justify-center">
-                          <span className="text-white text-[10px] font-bold">红</span>
+                          <span className="text-white text-[10px] font-bold">{t('tripMap.platformShortXhs')}</span>
                         </div>
-                        <h2 className="text-lg font-bold text-gray-900">相关推荐文章</h2>
-                        <span className="text-xs text-gray-400 ml-auto">来自小红书</span>
+                        <h2 className="text-lg font-bold text-gray-900">{t('tripMap.articlesTitle')}</h2>
+                        <span className="text-xs text-gray-400 ml-auto">{t('tripMap.articlesSource')}</span>
                       </div>
                       <div className="flex flex-col gap-3">
                         {selectedLocation.articles.map((article, idx) => (
@@ -922,7 +1035,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                               />
                               <div className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-red-500 flex items-center justify-center">
-                                <span className="text-white text-[7px] font-bold">红</span>
+                                <span className="text-white text-[7px] font-bold">{t('tripMap.platformShortXhs')}</span>
                               </div>
                             </div>
 
@@ -947,7 +1060,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                               </div>
                               <div className="flex items-center gap-1 mt-1">
                                 <ExternalLink className="w-3 h-3 text-red-400" />
-                                <span className="text-[11px] text-red-400">打开小红书查看</span>
+                                <span className="text-[11px] text-red-400">{t('tripMap.openInXhs')}</span>
                               </div>
                             </div>
                           </a>
@@ -968,7 +1081,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                   >
                     <MapIcon className="w-7 h-7 text-white" />
                   </button>
-                  <span className="text-sm text-gray-600 mt-1.5 font-medium bg-white/80 px-3 py-0.5 rounded-full backdrop-blur-sm">返回地图</span>
+                  <span className="text-sm text-gray-600 mt-1.5 font-medium bg-white/80 px-3 py-0.5 rounded-full backdrop-blur-sm">{t('tripMap.backToMap')}</span>
                 
                 </div>
               </div>
@@ -1024,7 +1137,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
               <ChevronLeft className="w-6 h-6" />
             </Button>
             <div style={{ color: '#fff', fontWeight: 600, fontSize: '16px', textShadow: '0 1px 3px rgba(0,0,0,0.3)' }}>
-              {zoomLevel < ZOOM_THRESHOLD ? '城市概览' : '探索地点'}
+              {zoomLevel < ZOOM_THRESHOLD ? t('tripMap.cityOverview') : t('tripMap.exploreLocations')}
             </div>
           </div>
         </div>
@@ -1073,7 +1186,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                     color: activeLayer === 'all' ? '#fff' : '#4b5563',
                   }}
                 >
-                  总览
+                  {t('tripMap.overview')}
                 </button>
               )}
 
@@ -1096,7 +1209,7 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
                       color: active ? '#fff' : '#4b5563',
                     }}
                   >
-                    第{dayNumber}天
+                    {t('tripMap.dayLabel', { day: dayNumber })}
                   </button>
                 );
               })}
@@ -1147,31 +1260,31 @@ export function TripMapPage({ tripId, onBack }: TripMapPageProps) {
             border: '1px solid rgba(0,0,0,0.06)',
           }}
         >
-          <div style={{ fontSize: '12px', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>行程路线</div>
+          <div style={{ fontSize: '12px', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>{t('tripMap.routeTitle')}</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ color: '#fff', fontSize: '9px', fontWeight: 700 }}>起</span>
+                <span style={{ color: '#fff', fontSize: '9px', fontWeight: 700 }}>{t('tripMap.markerStart')}</span>
               </div>
-              <span style={{ fontSize: '11px', color: '#4b5563' }}>出发地</span>
+              <span style={{ fontSize: '11px', color: '#4b5563' }}>{t('tripMap.routeOrigin')}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <span style={{ color: '#fff', fontSize: '9px', fontWeight: 700 }}>2</span>
               </div>
-              <span style={{ fontSize: '11px', color: '#4b5563' }}>途经点</span>
+              <span style={{ fontSize: '11px', color: '#4b5563' }}>{t('tripMap.routeWaypoint')}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: '#9333ea', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ color: '#fff', fontSize: '9px', fontWeight: 700 }}>终</span>
+                <span style={{ color: '#fff', fontSize: '9px', fontWeight: 700 }}>{t('tripMap.markerEnd')}</span>
               </div>
-              <span style={{ fontSize: '11px', color: '#4b5563' }}>终点</span>
+              <span style={{ fontSize: '11px', color: '#4b5563' }}>{t('tripMap.routeEnd')}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
               <div style={{ width: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <div style={{ width: '16px', borderTop: '2px dashed #f87171' }} />
               </div>
-              <span style={{ fontSize: '11px', color: '#4b5563' }}>行程路线</span>
+              <span style={{ fontSize: '11px', color: '#4b5563' }}>{t('tripMap.routeTitle')}</span>
             </div>
           </div>
         </div>

@@ -280,7 +280,8 @@ class AmapService implements AmapServiceInterface {
         const script = document.createElement('script');
         script.dataset.amapServiceSdk = 'true';
         script.async = true;
-        script.src = `https://webapi.amap.com/maps?v=2.0&key=${AMAP_API_KEY}`;
+        const lang = (import.meta.env.VITE_LOCALE === 'en' ? 'en' : 'zh_cn');
+        script.src = `https://webapi.amap.com/maps?v=2.0&key=${AMAP_API_KEY}&lang=${lang}`;
         script.onload = () => {
           if (window.AMap) {
             resolve(window.AMap);

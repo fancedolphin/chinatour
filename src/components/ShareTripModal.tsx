@@ -25,6 +25,7 @@ import { downloadTripPDF } from '@/services/exportService';
 import { tripService, type TripDetail } from '@/services/tripService';
 import { buildTripShareUrl, extractTripHighlights, getTripDayCount } from '@/utils/tripShare';
 import { supabase } from '@/utils/supabase/client';
+import { useT } from '@/i18n/useT';
 
 interface ShareTripModalProps {
   trip: {
@@ -41,6 +42,7 @@ interface ShareTripModalProps {
 }
 
 export function ShareTripModal({ trip, onClose }: ShareTripModalProps) {
+  const { t } = useT();
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [cardStyle, setCardStyle] = useState<'modern' | 'minimal' | 'instagram' | 'story'>('modern');
@@ -158,7 +160,7 @@ export function ShareTripModal({ trip, onClose }: ShareTripModalProps) {
       return canvas.toDataURL('image/png');
     } catch (error) {
       console.error('[ShareTripModal] 图片生成失败:', error);
-      toast.error('生成图片失败');
+      toast.error(t('shareTrip.imageFailed'));
       return '';
     } finally {
       setIsGeneratingImage(false);
@@ -175,7 +177,7 @@ export function ShareTripModal({ trip, onClose }: ShareTripModalProps) {
     link.download = `${enrichedTrip.destination.replace(/\s+/g, '-')}-trip.png`;
     link.href = dataUrl;
     link.click();
-    toast.success('图片已下载');
+    toast.success(t('shareTrip.imageDownloaded'));
   };
 
   const handleDownloadPDF = async () => {
@@ -188,10 +190,10 @@ export function ShareTripModal({ trip, onClose }: ShareTripModalProps) {
       }
 
       await downloadTripPDF(detail);
-      toast.success('PDF 已开始下载');
+      toast.success(t('shareTrip.pdfStarted'));
     } catch (error) {
-      console.error('[ShareTripModal] PDF 导出失败:', error);
-      toast.error(error instanceof Error ? error.message : 'PDF 导出失败');
+      console.error('[ShareTripModal] PDF export failed:', error);
+      toast.error(error instanceof Error ? error.message : t('shareTrip.pdfFailed'));
     } finally {
       setIsGeneratingPdf(false);
     }
@@ -200,16 +202,16 @@ export function ShareTripModal({ trip, onClose }: ShareTripModalProps) {
   const handleCopyLink = async () => {
     try {
       await navigator.clipboard.writeText(shareUrl);
-      toast.success('链接已复制');
+      toast.success(t('shareTrip.linkCopied'));
     } catch (error) {
-      console.error('[ShareTripModal] 复制链接失败:', error);
-      toast.error('复制链接失败');
+      console.error('[ShareTripModal] copy link failed:', error);
+      toast.error(t('shareTrip.linkCopyFailed'));
     }
   };
 
   const handleInstagramShare = async () => {
     await generateImage();
-    toast.success('图片已生成，可直接上传到 Instagram');
+    toast.success(t('shareTrip.instagramReady'));
   };
 
   const handleFacebookShare = () => {
@@ -239,8 +241,8 @@ export function ShareTripModal({ trip, onClose }: ShareTripModalProps) {
   };
 
   const handleShareToDiscover = () => {
-    toast.success('已分享到发现页', {
-      description: '你的行程摘要已经整理完毕，接下来可继续完善发布内容。',
+    toast.success(t('shareTrip.shareToDiscoverToast'), {
+      description: t('shareTrip.shareToDiscoverToastDesc'),
     });
   };
 
@@ -287,8 +289,8 @@ export function ShareTripModal({ trip, onClose }: ShareTripModalProps) {
       <div className="max-h-[95vh] w-full max-w-4xl overflow-y-auto rounded-3xl bg-white shadow-2xl">
         <div className="sticky top-0 z-10 flex items-center justify-between rounded-t-3xl border-b border-gray-200 bg-white px-6 py-4">
           <div>
-            <h2 className="text-gray-900">Share Your Trip</h2>
-            <p className="mt-1 text-sm text-gray-500">Export a polished trip card, image, or PDF</p>
+            <h2 className="text-gray-900">{t('shareTrip.title')}</h2>
+            <p className="mt-1 text-sm text-gray-500">{t('shareTrip.subtitle')}</p>
           </div>
           <button
             onClick={onClose}
@@ -303,19 +305,19 @@ export function ShareTripModal({ trip, onClose }: ShareTripModalProps) {
             <TabsList className="mb-6 grid w-full grid-cols-4">
               <TabsTrigger value="share" className="gap-2">
                 <Share2 className="h-4 w-4" />
-                Share
+                {t('shareTrip.tabShare')}
               </TabsTrigger>
               <TabsTrigger value="preview" className="gap-2">
                 <Camera className="h-4 w-4" />
-                Preview
+                {t('shareTrip.tabPreview')}
               </TabsTrigger>
               <TabsTrigger value="styles" className="gap-2">
                 <Palette className="h-4 w-4" />
-                Styles
+                {t('shareTrip.tabStyles')}
               </TabsTrigger>
               <TabsTrigger value="export" className="gap-2">
                 <Download className="h-4 w-4" />
-                Export
+                {t('shareTrip.tabExport')}
               </TabsTrigger>
             </TabsList>
 
@@ -323,7 +325,7 @@ export function ShareTripModal({ trip, onClose }: ShareTripModalProps) {
               <div className="rounded-2xl border-2 border-red-200 bg-gradient-to-br from-red-50 to-pink-50 p-4">
                 <h3 className="mb-3 flex items-center gap-2 text-sm uppercase tracking-wide text-red-700">
                   <Sparkles className="h-4 w-4" />
-                  平台推荐
+                  {t('shareTrip.platformRecommend')}
                 </h3>
                 <button
                   onClick={handleShareToDiscover}
@@ -333,21 +335,21 @@ export function ShareTripModal({ trip, onClose }: ShareTripModalProps) {
                     <Compass className="h-7 w-7 text-white" />
                   </div>
                   <div className="flex-1 text-left">
-                    <p className="text-gray-900">分享到发现</p>
-                    <p className="text-xs text-gray-500">让更多人看到你的精彩行程</p>
+                    <p className="text-gray-900">{t('shareTrip.shareToDiscover')}</p>
+                    <p className="text-xs text-gray-500">{t('shareTrip.shareToDiscoverDesc')}</p>
                   </div>
-                  <div className="rounded-full bg-red-100 px-3 py-1 text-xs text-red-600">推荐</div>
+                  <div className="rounded-full bg-red-100 px-3 py-1 text-xs text-red-600">{t('shareTrip.shareToDiscoverBadge')}</div>
                 </button>
               </div>
 
               <div className="rounded-2xl bg-gray-50 p-4">
-                <h3 className="mb-3 text-sm uppercase tracking-wide text-gray-700">Quick Actions</h3>
+                <h3 className="mb-3 text-sm uppercase tracking-wide text-gray-700">{t('shareTrip.quickActions')}</h3>
                 <div className="grid grid-cols-2 gap-3">
                   <Button onClick={handleCopyLink} variant="outline" className="h-auto justify-start gap-3 py-3">
                     <Link2 className="h-5 w-5 text-blue-500" />
                     <div className="text-left">
-                      <p className="text-sm text-gray-900">Copy Link</p>
-                      <p className="text-xs text-gray-500">Share anywhere</p>
+                      <p className="text-sm text-gray-900">{t('shareTrip.copyLink')}</p>
+                      <p className="text-xs text-gray-500">{t('shareTrip.copyLinkDesc')}</p>
                     </div>
                   </Button>
                   <Button
@@ -358,15 +360,15 @@ export function ShareTripModal({ trip, onClose }: ShareTripModalProps) {
                   >
                     <Download className="h-5 w-5 text-green-500" />
                     <div className="text-left">
-                      <p className="text-sm text-gray-900">{isGeneratingImage ? 'Generating...' : 'Download'}</p>
-                      <p className="text-xs text-gray-500">Save as image</p>
+                      <p className="text-sm text-gray-900">{isGeneratingImage ? t('shareTrip.generating') : t('shareTrip.download')}</p>
+                      <p className="text-xs text-gray-500">{t('shareTrip.downloadDesc')}</p>
                     </div>
                   </Button>
                 </div>
               </div>
 
               <div>
-                <h3 className="mb-4 text-sm uppercase tracking-wide text-gray-700">Share to Social Media</h3>
+                <h3 className="mb-4 text-sm uppercase tracking-wide text-gray-700">{t('shareTrip.shareSocial')}</h3>
                 <div className="grid grid-cols-2 gap-3">
                   {socialPlatforms.map((platform) => (
                     <button
@@ -388,7 +390,7 @@ export function ShareTripModal({ trip, onClose }: ShareTripModalProps) {
               </div>
 
               <div className="rounded-2xl border border-red-100 bg-gradient-to-br from-red-50 to-pink-50 p-4">
-                <p className="mb-2 text-xs uppercase tracking-wide text-gray-600">Share URL</p>
+                <p className="mb-2 text-xs uppercase tracking-wide text-gray-600">{t('shareTrip.shareUrl')}</p>
                 <div className="flex items-center gap-2">
                   <code className="flex-1 overflow-x-auto rounded-lg bg-white px-3 py-2 text-sm text-gray-900">
                     {shareUrl}
@@ -406,14 +408,14 @@ export function ShareTripModal({ trip, onClose }: ShareTripModalProps) {
                   <TripShareCardStyles trip={enrichedTrip} style={cardStyle} />
                 </div>
                 <p className="text-center text-xs text-gray-500">
-                  {sharedTripId ? '预览已包含日期、预算、亮点和二维码' : '未发布到 Discover 时，二维码会在发布后自动启用'}
+                  {sharedTripId ? t('shareTrip.previewWithQR') : t('shareTrip.previewNoQR')}
                 </p>
               </div>
             </TabsContent>
 
             <TabsContent value="styles" className="space-y-4">
               <div>
-                <h3 className="mb-4 text-sm uppercase tracking-wide text-gray-700">Choose Your Style</h3>
+                <h3 className="mb-4 text-sm uppercase tracking-wide text-gray-700">{t('shareTrip.chooseStyle')}</h3>
                 <div className="grid grid-cols-2 gap-4">
                   {([
                     ['modern', 'Modern', 'from-red-500 to-pink-500'],
@@ -456,12 +458,12 @@ export function ShareTripModal({ trip, onClose }: ShareTripModalProps) {
                     <Camera className="h-7 w-7 text-white" />
                   </div>
                   <div className="flex-1 text-left">
-                    <h3 className="mb-1 text-gray-900">Export as Image (PNG)</h3>
-                    <p className="text-sm text-gray-600">High-quality image with summary and QR code</p>
-                    <p className="mt-1 text-xs text-gray-500">Recommended for social media</p>
+                    <h3 className="mb-1 text-gray-900">{t('shareTrip.exportImageTitle')}</h3>
+                    <p className="text-sm text-gray-600">{t('shareTrip.exportImageDesc')}</p>
+                    <p className="mt-1 text-xs text-gray-500">{t('shareTrip.exportImageHint')}</p>
                   </div>
                   <span className="text-sm text-blue-600 group-hover:text-blue-700">
-                    {isGeneratingImage ? 'Generating...' : 'Download →'}
+                    {isGeneratingImage ? t('shareTrip.generating') : t('shareTrip.downloadAction')}
                   </span>
                 </button>
 
@@ -474,12 +476,12 @@ export function ShareTripModal({ trip, onClose }: ShareTripModalProps) {
                     <FileText className="h-7 w-7 text-white" />
                   </div>
                   <div className="flex-1 text-left">
-                    <h3 className="mb-1 text-gray-900">Export as PDF</h3>
-                    <p className="text-sm text-gray-600">封面、每日行程、活动详情和预算汇总</p>
-                    <p className="mt-1 text-xs text-gray-500">A4 multi-page export</p>
+                    <h3 className="mb-1 text-gray-900">{t('shareTrip.exportPdfTitle')}</h3>
+                    <p className="text-sm text-gray-600">{t('shareTrip.exportPdfDesc')}</p>
+                    <p className="mt-1 text-xs text-gray-500">{t('shareTrip.exportPdfHint')}</p>
                   </div>
                   <span className="text-sm text-red-600 group-hover:text-red-700">
-                    {isGeneratingPdf ? 'Generating...' : 'Download →'}
+                    {isGeneratingPdf ? t('shareTrip.generating') : t('shareTrip.downloadAction')}
                   </span>
                 </button>
 
@@ -491,11 +493,11 @@ export function ShareTripModal({ trip, onClose }: ShareTripModalProps) {
                     <Link2 className="h-7 w-7 text-white" />
                   </div>
                   <div className="flex-1 text-left">
-                    <h3 className="mb-1 text-gray-900">Share Link</h3>
-                    <p className="text-sm text-gray-600">Copy a shareable link to clipboard</p>
-                    <p className="mt-1 text-xs text-gray-500">Anyone with the link can view</p>
+                    <h3 className="mb-1 text-gray-900">{t('shareTrip.shareLinkTitle')}</h3>
+                    <p className="text-sm text-gray-600">{t('shareTrip.shareLinkDesc')}</p>
+                    <p className="mt-1 text-xs text-gray-500">{t('shareTrip.shareLinkHint')}</p>
                   </div>
-                  <span className="text-sm text-green-600 group-hover:text-green-700">Copy →</span>
+                  <span className="text-sm text-green-600 group-hover:text-green-700">{t('shareTrip.copyAction')}</span>
                 </button>
               </div>
             </TabsContent>

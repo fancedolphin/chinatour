@@ -83,7 +83,35 @@ export function parseDates(dateStr: string): { startDate: string; endDate: strin
     return { startDate, endDate };
   }
 
-  throw new Error(`[tripDataTransformer] 无法解析日期格式: ${dateStr}`);
+  // English formats — let Date.parse handle whatever it can:
+  //   "April 29, 2026 - May 2, 2026"
+  //   "Apr 29 - May 2, 2026"        (year on the right side only)
+  //   "April 29 - 2026-05-02"
+  const dashSplit = dateStr.split(/\s*[-–]\s*/);
+  if (dashSplit.length === 2) {
+    let [leftStr, rightStr] = dashSplit;
+
+    // If the year is only on the right side, copy it to the left ("Apr 29 - May 2, 2026")
+    const rightYearMatch = rightStr.match(/\b(\d{4})\b/);
+    if (rightYearMatch && !/\b\d{4}\b/.test(leftStr)) {
+      leftStr = `${leftStr}, ${rightYearMatch[1]}`;
+    }
+
+    const leftMs = Date.parse(leftStr);
+    const rightMs = Date.parse(rightStr);
+    if (!Number.isNaN(leftMs) && !Number.isNaN(rightMs)) {
+      const toIso = (ms: number) => {
+        const d = new Date(ms);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      };
+      return { startDate: toIso(leftMs), endDate: toIso(rightMs) };
+    }
+  }
+
+  throw new Error(`[tripDataTransformer] Unable to parse date format: ${dateStr}`);
 }
 
 /**
@@ -169,6 +197,10 @@ const parsePoiLocation = (location?: string): PlanActivity['geoCoordinates'] | u
 const enhanceActivity = async (activity: PlanActivity, city: string): Promise<PlanActivity> => {
   // 跳过交通活动
   if (activity.type === 'transport') {
+    return activity;
+  }
+
+  if ((activity.type === 'meal' || activity.type === 'attraction') && hasCoordinates(activity.geoCoordinates)) {
     return activity;
   }
 

@@ -11,6 +11,8 @@ import { useAuthContext } from '../presentation/context/AuthContext';
 import { sharedTripService, type SharedTripCard } from '@/services/sharedTripService';
 import { followService, type PublicUserProfile } from '@/services/followService';
 import { supabase } from '@/utils/supabase/client';
+import { useT } from '@/i18n/useT';
+import { formatDateRange as fmtDateRange } from '@/utils/formatters';
 
 interface ProfilePageProps {
   viewedUserId?: string | null;
@@ -37,6 +39,7 @@ function buildFallbackProfile(currentUser: NonNullable<ReturnType<typeof useAuth
 }
 
 export function ProfilePage({ viewedUserId, onBack, onOpenDetail }: ProfilePageProps) {
+  const { t } = useT();
   const { currentUser } = useAuthContext();
   const [showSettings, setShowSettings] = useState(false);
   const [profile, setProfile] = useState<PublicUserProfile | null>(null);
@@ -67,7 +70,7 @@ export function ProfilePage({ viewedUserId, onBack, onOpenDetail }: ProfilePageP
   useEffect(() => {
     if (!targetUserId) {
       setLoading(false);
-      setError('请先登录后查看主页');
+      setError(t('profile.loginRequiredView'));
       return;
     }
 
@@ -98,7 +101,7 @@ export function ProfilePage({ viewedUserId, onBack, onOpenDetail }: ProfilePageP
           nextProfile = buildFallbackProfile(currentUser);
         }
         if (!nextProfile) {
-          throw new Error('用户不存在');
+          throw new Error(t('profile.userNotFound'));
         }
 
         const interactionTripIds = Array.from(new Set([
@@ -133,8 +136,8 @@ export function ProfilePage({ viewedUserId, onBack, onOpenDetail }: ProfilePageP
         setIsFollowing(followingState);
       } catch (loadError) {
         if (!cancelled) {
-          console.error('[ProfilePage] 加载失败:', loadError);
-          setError(loadError instanceof Error ? loadError.message : '加载失败');
+          console.error('[ProfilePage] load failed:', loadError);
+          setError(loadError instanceof Error ? loadError.message : t('profile.loadFailed'));
         }
       } finally {
         if (!cancelled) {
@@ -154,12 +157,8 @@ export function ProfilePage({ viewedUserId, onBack, onOpenDetail }: ProfilePageP
   }
 
   const formatDateRange = (start: string, end: string) => {
-    if (!start || !end) {
-      return '';
-    }
-    const startDate = new Date(start);
-    const endDate = new Date(end);
-    return `${startDate.getFullYear()}年${startDate.getMonth() + 1}月${startDate.getDate()}日 - ${endDate.getMonth() + 1}月${endDate.getDate()}日`;
+    if (!start || !end) return '';
+    return fmtDateRange(new Date(start), new Date(end));
   };
 
   const updateTripLikeCount = (sharedTripId: string, delta: number) => {
@@ -190,7 +189,7 @@ export function ProfilePage({ viewedUserId, onBack, onOpenDetail }: ProfilePageP
 
   const handleToggleLike = async (sharedTripId: string) => {
     if (!currentUser) {
-      toast.error('请先登录');
+      toast.error(t('profile.loginRequired'));
       return;
     }
 
@@ -235,13 +234,13 @@ export function ProfilePage({ viewedUserId, onBack, onOpenDetail }: ProfilePageP
         setEngagementCount((prev) => Math.max(0, prev + (nextLiked ? 1 : -1)));
       }
     } catch {
-      toast.error('操作失败');
+      toast.error(t('profile.operationFailed'));
     }
   };
 
   const handleToggleSave = async (sharedTripId: string) => {
     if (!currentUser) {
-      toast.error('请先登录');
+      toast.error(t('profile.loginRequired'));
       return;
     }
 
@@ -262,30 +261,32 @@ export function ProfilePage({ viewedUserId, onBack, onOpenDetail }: ProfilePageP
         setEngagementCount((prev) => Math.max(0, prev + (nextSaved ? 1 : -1)));
       }
     } catch {
-      toast.error('操作失败');
+      toast.error(t('profile.operationFailed'));
     }
   };
 
   const handleFork = async (sharedTripId: string) => {
     if (!currentUser) {
-      toast.error('请先登录');
+      toast.error(t('profile.loginRequired'));
       return;
     }
 
     try {
       setForkingId(sharedTripId);
       await sharedTripService.forkTrip(sharedTripId, currentUser.id);
-      toast.success('行程已导入，快去修改成你的专属路线！');
+      toast.success(t('profile.forkSuccess'));
     } catch (forkError) {
-      toast.error('导入失败：' + (forkError instanceof Error ? forkError.message : '未知错误'));
+      toast.error(t('profile.forkFailed', {
+        reason: forkError instanceof Error ? forkError.message : t('profile.unknownError'),
+      }));
     } finally {
       setForkingId(null);
     }
   };
 
-  const displayName = profile?.display_name || (isOwnProfile ? currentUser?.displayName : null) || '旅行者';
-  const username = profile?.username || currentUser?.username || 'traveler';
-  const bio = profile?.bio || (isOwnProfile ? currentUser?.bio : null) || '这个人很低调，还没有填写简介。';
+  const displayName = profile?.display_name || (isOwnProfile ? currentUser?.displayName : null) || t('profile.defaultDisplayName');
+  const username = profile?.username || currentUser?.username || t('profile.defaultUsername');
+  const bio = profile?.bio || (isOwnProfile ? currentUser?.bio : null) || t('profile.defaultBio');
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
@@ -323,12 +324,12 @@ export function ProfilePage({ viewedUserId, onBack, onOpenDetail }: ProfilePageP
               <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <h2 className="text-gray-900">{displayName}</h2>
-                  <p className="mt-1 text-sm text-gray-600">旅行者 ID: @{username}</p>
+                  <p className="mt-1 text-sm text-gray-600">{t('profile.travelerId', { username })}</p>
                 </div>
                 {profile && (
                   isOwnProfile ? (
                     <Button type="button" variant="outline" onClick={() => setShowSettings(true)}>
-                      编辑资料
+                      {t('profile.editProfile')}
                     </Button>
                   ) : (
                     <FollowButton
@@ -354,15 +355,15 @@ export function ProfilePage({ viewedUserId, onBack, onOpenDetail }: ProfilePageP
           <div className="grid grid-cols-3 gap-4 border-t border-gray-100 py-3">
             <div className="text-center">
               <div className="text-gray-900">{profile?.following_count.toLocaleString() ?? 0}</div>
-              <div className="text-xs text-gray-500">关注</div>
+              <div className="text-xs text-gray-500">{t('profile.following')}</div>
             </div>
             <div className="text-center">
               <div className="text-gray-900">{profile?.followers_count.toLocaleString() ?? 0}</div>
-              <div className="text-xs text-gray-500">粉丝</div>
+              <div className="text-xs text-gray-500">{t('profile.followers')}</div>
             </div>
             <div className="text-center">
               <div className="text-gray-900">{engagementCount.toLocaleString()}</div>
-              <div className="text-xs text-gray-500">获赞与收藏</div>
+              <div className="text-xs text-gray-500">{t('profile.engagement')}</div>
             </div>
           </div>
         </div>
@@ -372,8 +373,8 @@ export function ProfilePage({ viewedUserId, onBack, onOpenDetail }: ProfilePageP
             ? 'mb-4 grid w-full grid-cols-2 rounded-xl bg-white p-1'
             : 'mb-4 grid w-full grid-cols-1 rounded-xl bg-white p-1'}
           >
-            <TabsTrigger value="published">发布的行程</TabsTrigger>
-            {isOwnProfile && <TabsTrigger value="liked">赞过行程</TabsTrigger>}
+            <TabsTrigger value="published">{t('profile.tabPublished')}</TabsTrigger>
+            {isOwnProfile && <TabsTrigger value="liked">{t('profile.tabLiked')}</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="published">
@@ -381,7 +382,7 @@ export function ProfilePage({ viewedUserId, onBack, onOpenDetail }: ProfilePageP
               trips={publishedTrips}
               loading={loading}
               error={error}
-              emptyMessage={isOwnProfile ? '你还没有发布公开行程' : 'TA 还没有发布公开行程'}
+              emptyMessage={isOwnProfile ? t('profile.emptyOwnPublished') : t('profile.emptyOtherPublished')}
               savedTrips={savedTrips}
               likedTrips={likedTripIds}
               forkingId={forkingId}
@@ -400,7 +401,7 @@ export function ProfilePage({ viewedUserId, onBack, onOpenDetail }: ProfilePageP
                 trips={likedTrips}
                 loading={loading}
                 error={error}
-                emptyMessage="你还没有赞过公开行程"
+                emptyMessage={t('profile.emptyLiked')}
                 savedTrips={savedTrips}
                 likedTrips={likedTripIds}
                 forkingId={forkingId}

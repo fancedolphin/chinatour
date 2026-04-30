@@ -5,7 +5,9 @@ type PlanningRunMetrics = {
   canGenerate: boolean;
   stageTimings: {
     embedding: number;
-    rag_retrieve: number;
+    attraction_retrieval: number;
+    restaurant_proximity: number;
+    restaurant_fallback: number;
     amap_fallback: number;
     planner: number;
     validator: number;

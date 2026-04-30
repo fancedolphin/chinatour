@@ -9,16 +9,21 @@
  */
 
 import { useState } from 'react';
-import { LogIn, Shield, User, X } from 'lucide-react';
+import { LogIn, User, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { useAuthContext } from '../presentation/context/AuthContext';
 import { toast } from 'sonner@2.0.3';
-import { DEFAULT_ADMIN_CONFIG, DEFAULT_TEST_USER_CONFIG } from '../infrastructure/initializers/AdminInitializer';
 
 interface QuickLoginPanelProps {
   onLoginSuccess?: () => void;
 }
+
+const SUPABASE_TEST_LOGIN = {
+  email: 'test@test123.com',
+  password: 'Test123!',
+  label: '测试账号',
+};
 
 export function QuickLoginPanel({ onLoginSuccess }: QuickLoginPanelProps) {
   const { login, loading } = useAuthContext();
@@ -31,9 +36,9 @@ export function QuickLoginPanel({ onLoginSuccess }: QuickLoginPanelProps) {
     return null;
   }
 
-  const handleQuickLogin = async (username: string, password: string, accountType: string) => {
+  const handleQuickLogin = async (email: string, password: string, accountType: string) => {
     try {
-      const result = await login(username, password);
+      const result = await login(email, password);
       
       if (result.success) {
         toast.success(`${accountType}登录成功！`);
@@ -74,53 +79,27 @@ export function QuickLoginPanel({ onLoginSuccess }: QuickLoginPanelProps) {
 
           {/* Quick Login Buttons */}
           <div className="space-y-3">
-            {/* Admin Login */}
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-xs text-gray-600">
-                <Shield className="w-3 h-3" />
-                <span>管理员账户</span>
-              </div>
-              <Button
-                onClick={() => handleQuickLogin(
-                  DEFAULT_ADMIN_CONFIG.username,
-                  DEFAULT_ADMIN_CONFIG.password,
-                  '管理员'
-                )}
-                disabled={loading}
-                className="w-full bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white"
-                size="sm"
-              >
-                <Shield className="w-4 h-4 mr-2" />
-                登录为管理员
-              </Button>
-              <div className="text-xs text-gray-500 pl-1">
-                用户名: {DEFAULT_ADMIN_CONFIG.username}<br/>
-                密码: {DEFAULT_ADMIN_CONFIG.password}
-              </div>
-            </div>
-
-            {/* Test User Login */}
-            <div className="space-y-2 pt-3 border-t border-gray-200">
-              <div className="flex items-center gap-2 text-xs text-gray-600">
                 <User className="w-3 h-3" />
-                <span>测试用户账户</span>
+                <span>Supabase 测试账号</span>
               </div>
               <Button
                 onClick={() => handleQuickLogin(
-                  DEFAULT_TEST_USER_CONFIG.username,
-                  DEFAULT_TEST_USER_CONFIG.password,
-                  '测试用户'
+                  SUPABASE_TEST_LOGIN.email,
+                  SUPABASE_TEST_LOGIN.password,
+                  SUPABASE_TEST_LOGIN.label
                 )}
                 disabled={loading}
                 className="w-full bg-blue-500 hover:bg-blue-600 text-white"
                 size="sm"
               >
                 <User className="w-4 h-4 mr-2" />
-                登录为测试用户
+                登录为测试账号
               </Button>
               <div className="text-xs text-gray-500 pl-1">
-                用户名: {DEFAULT_TEST_USER_CONFIG.username}<br/>
-                密码: {DEFAULT_TEST_USER_CONFIG.password}
+                邮箱: {SUPABASE_TEST_LOGIN.email}<br/>
+                密码: {SUPABASE_TEST_LOGIN.password}
               </div>
             </div>
           </div>
@@ -128,7 +107,7 @@ export function QuickLoginPanel({ onLoginSuccess }: QuickLoginPanelProps) {
           {/* Warning */}
           <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
             <p className="text-xs text-yellow-800">
-              ⚠️ 此面板仅在开发环境显示，生产环境将自动隐藏。
+              当前认证基于 Supabase Auth，仅支持邮箱登录。旧的本地默认用户名账户不适用于这里。
             </p>
           </div>
         </div>

@@ -77,6 +77,10 @@ function bookingTip(id: string, title: string, content: string): BookingTip {
   return { id, title, content };
 }
 
+function point(lat: number, lng: number) {
+  return { lat, lng };
+}
+
 const cityFixtures: Record<string, CityFixture> = {
   北京: {
     attractions: [
@@ -183,6 +187,105 @@ const cityFixtures: Record<string, CityFixture> = {
     ],
   },
 };
+
+const fixtureLocations: Record<string, Record<string, { lat: number; lng: number }>> = {
+  北京: {
+    故宫博物院: point(39.9163, 116.3972),
+    天坛公园: point(39.8822, 116.4065),
+    中国考古博物馆: point(39.9876, 116.3098),
+    三元牛奶工厂: point(40.0481, 116.4459),
+    四季民福烤鸭店: point(39.9149, 116.4027),
+    护国寺小吃: point(39.9301, 116.3724),
+    方砖厂69号炸酱面: point(39.9394, 116.3931),
+  },
+  上海: {
+    外滩: point(31.2400, 121.4900),
+    豫园: point(31.2273, 121.4926),
+    上海博物馆: point(31.2304, 121.4740),
+    上海汽车文化与制造体验中心: point(31.2941, 121.2272),
+    绿波廊: point(31.2276, 121.4921),
+    南翔馒头店: point(31.2278, 121.4927),
+    德兴馆: point(31.2318, 121.4767),
+  },
+  西安: {
+    兵马俑: point(34.3849, 109.2786),
+    西安城墙: point(34.2591, 108.9470),
+    西安博物院: point(34.2395, 108.9544),
+    大唐不夜城: point(34.2198, 108.9687),
+    老孙家泡馍: point(34.2620, 108.9487),
+    贾三灌汤包: point(34.2657, 108.9498),
+    定家小酥肉: point(34.2638, 108.9468),
+  },
+  成都: {
+    宽窄巷子: point(30.6679, 104.0498),
+    成都博物馆: point(30.6578, 104.0648),
+    川剧变脸剧场: point(30.6597, 104.0703),
+    人民公园: point(30.6590, 104.0552),
+    陈麻婆豆腐: point(30.6574, 104.0670),
+    钟水饺: point(30.6588, 104.0613),
+    龙抄手: point(30.6608, 104.0636),
+  },
+  敦煌: {
+    鸣沙山月牙泉: point(40.0872, 94.6821),
+    莫高窟: point(40.0422, 94.8077),
+    敦煌博物馆: point(40.1484, 94.6617),
+    沙洲夜市: point(40.1424, 94.6678),
+    达记酿皮: point(40.1430, 94.6682),
+    驴肉黄面馆: point(40.1421, 94.6662),
+    杏皮水铺: point(40.1415, 94.6674),
+  },
+  杭州: {
+    西湖: point(30.2480, 120.1500),
+    中国丝绸博物馆: point(30.2240, 120.1546),
+    灵隐寺: point(30.2428, 120.1006),
+    清河坊: point(30.2422, 120.1736),
+    楼外楼: point(30.2582, 120.1415),
+    奎元馆: point(30.2544, 120.1682),
+    知味观: point(30.2590, 120.1661),
+  },
+  广州: {
+    陈家祠: point(23.1258, 113.2448),
+    广东省博物馆: point(23.1196, 113.3216),
+    沙面: point(23.1086, 113.2415),
+    广州塔观景区: point(23.1085, 113.3247),
+    点都德: point(23.1281, 113.2644),
+    陶陶居: point(23.1288, 113.2582),
+    银记肠粉: point(23.1301, 113.2610),
+  },
+  重庆: {
+    洪崖洞: point(29.5635, 106.5772),
+    三峡博物馆: point(29.5646, 106.5510),
+    磁器口古镇: point(29.5813, 106.4464),
+    李子坝观景平台: point(29.5565, 106.5349),
+    珮姐老火锅: point(29.5584, 106.5763),
+    山城小汤圆: point(29.5608, 106.5738),
+    花市豌杂面: point(29.5652, 106.5489),
+  },
+};
+
+for (const [city, fixture] of Object.entries(cityFixtures)) {
+  const center = ({
+      北京: point(39.9163, 116.3972),
+      上海: point(31.2304, 121.474),
+      西安: point(34.2591, 108.947),
+      成都: point(30.6585, 104.062),
+      敦煌: point(40.1422, 94.667),
+      杭州: point(30.252, 120.158),
+      广州: point(23.1281, 113.2644),
+      重庆: point(29.5635, 106.56),
+    } as Record<string, { lat: number; lng: number }>)[city];
+
+  cityFixtures[city] = {
+    attractions: fixture.attractions.map((item, index) => ({
+      ...item,
+      location: point(center.lat + index * 0.002, center.lng + index * 0.002),
+    })),
+    food: fixture.food.map((item, index) => ({
+      ...item,
+      location: point(center.lat + index * 0.0015 + 0.0004, center.lng + index * 0.0015 + 0.0004),
+    })),
+  };
+}
 
 type CaseConfig = {
   id: string;

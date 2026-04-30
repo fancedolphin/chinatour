@@ -3,6 +3,7 @@ import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
 import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
+import { useT } from '@/i18n/useT';
 
 interface SubwayOption {
   line: string;
@@ -37,13 +38,15 @@ interface TransportDetailCardProps {
 }
 
 export function TransportDetailCard({ transport, onClose }: TransportDetailCardProps) {
+  const { t } = useT();
+  const tips = t('transport.tips', { returnObjects: true }) as string[];
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
         {/* Header */}
         <div className="p-6 border-b border-gray-200 flex items-start justify-between">
           <div className="flex-1">
-            <h2 className="text-gray-900 mb-2">交通指引</h2>
+            <h2 className="text-gray-900 mb-2">{t('transport.title')}</h2>
             <div className="flex items-center gap-2 text-sm text-gray-600">
               <MapPin className="w-4 h-4" />
               <span>{transport.from}</span>
@@ -70,8 +73,8 @@ export function TransportDetailCard({ transport, onClose }: TransportDetailCardP
                     <Train className="w-5 h-5 text-white" />
                   </div>
                   <div>
-                    <h3 className="text-gray-900">地铁出行</h3>
-                    <p className="text-xs text-gray-600">推荐方式 · 准时便捷</p>
+                    <h3 className="text-gray-900">{t('transport.subway')}</h3>
+                    <p className="text-xs text-gray-600">{t('transport.subwayBadge')}</p>
                   </div>
                 </div>
 
@@ -81,7 +84,7 @@ export function TransportDetailCard({ transport, onClose }: TransportDetailCardP
                     <div className="flex items-center gap-2 mb-3">
                       <Badge className="bg-blue-500">{transport.subway.line}</Badge>
                       <span className="text-xs text-gray-500">
-                        {transport.subway.stations.length} 站
+                        {t('transport.stationsCount', { count: transport.subway.stations.length })}
                       </span>
                     </div>
                     <div className="flex gap-4 text-sm">
@@ -102,7 +105,7 @@ export function TransportDetailCard({ transport, onClose }: TransportDetailCardP
                   <div>
                     <h4 className="text-sm text-gray-900 mb-3 flex items-center gap-2">
                       <Smartphone className="w-4 h-4 text-green-500" />
-                      <span>支付宝扫码购票（推荐）</span>
+                      <span>{t('transport.alipayBuy')}</span>
                     </h4>
                     <div className="bg-white rounded-lg p-4 space-y-2">
                       {transport.subway.alipayGuide.map((step, index) => (
@@ -118,7 +121,7 @@ export function TransportDetailCard({ transport, onClose }: TransportDetailCardP
 
                   {/* Traditional Ticket Guide */}
                   <div>
-                    <h4 className="text-sm text-gray-900 mb-3">其他购票方式</h4>
+                    <h4 className="text-sm text-gray-900 mb-3">{t('transport.otherBuy')}</h4>
                     <div className="bg-white rounded-lg p-4 space-y-2">
                       {transport.subway.ticketGuide.map((guide, index) => (
                         <div key={index} className="flex gap-2 text-xs text-gray-600">
@@ -131,7 +134,7 @@ export function TransportDetailCard({ transport, onClose }: TransportDetailCardP
 
                   {/* Stations Preview */}
                   <div>
-                    <h4 className="text-sm text-gray-900 mb-3">途经站点</h4>
+                    <h4 className="text-sm text-gray-900 mb-3">{t('transport.stations')}</h4>
                     <div className="bg-white rounded-lg p-4">
                       <div className="flex flex-wrap gap-2">
                         {transport.subway.stations.map((station, index) => (
@@ -157,7 +160,7 @@ export function TransportDetailCard({ transport, onClose }: TransportDetailCardP
                     <Separator />
                   </div>
                   <div className="relative flex justify-center">
-                    <span className="bg-gray-50 px-4 text-xs text-gray-500">或者</span>
+                    <span className="bg-gray-50 px-4 text-xs text-gray-500">{t('transport.or')}</span>
                   </div>
                 </div>}
 
@@ -167,8 +170,8 @@ export function TransportDetailCard({ transport, onClose }: TransportDetailCardP
                       <Car className="w-5 h-5 text-white" />
                     </div>
                     <div>
-                      <h3 className="text-gray-900">打车出行</h3>
-                      <p className="text-xs text-gray-600">舒适便捷 · 直达目的地</p>
+                      <h3 className="text-gray-900">{t('transport.taxi')}</h3>
+                      <p className="text-xs text-gray-600">{t('transport.taxiBadge')}</p>
                     </div>
                   </div>
 
@@ -178,7 +181,7 @@ export function TransportDetailCard({ transport, onClose }: TransportDetailCardP
                       <div className="flex gap-4 text-sm">
                         <div className="flex items-center gap-2">
                           <DollarSign className="w-4 h-4 text-gray-400" />
-                          <span className="text-gray-600">预计费用：{transport.taxi.estimatedPrice}</span>
+                          <span className="text-gray-600">{t('transport.estimatedPrice', { price: transport.taxi.estimatedPrice })}</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <Clock className="w-4 h-4 text-gray-400" />
@@ -189,7 +192,7 @@ export function TransportDetailCard({ transport, onClose }: TransportDetailCardP
 
                     {/* Apps */}
                     <div>
-                      <h4 className="text-sm text-gray-900 mb-3">推荐打车App</h4>
+                      <h4 className="text-sm text-gray-900 mb-3">{t('transport.recommendedApps')}</h4>
                       <div className="space-y-2">
                         {transport.taxi.apps.map((app, index) => (
                           <div key={index} className="bg-white rounded-lg p-4">
@@ -200,7 +203,7 @@ export function TransportDetailCard({ transport, onClose }: TransportDetailCardP
                                   {app.supportsAlipay && (
                                     <Badge variant="secondary" className="bg-green-100 text-green-700">
                                       <Smartphone className="w-3 h-3 mr-1" />
-                                      支持支付宝
+                                      {t('transport.supportsAlipay')}
                                     </Badge>
                                   )}
                                 </div>
@@ -216,7 +219,7 @@ export function TransportDetailCard({ transport, onClose }: TransportDetailCardP
                     <div className="bg-white rounded-lg p-4">
                       <h4 className="text-sm text-gray-900 mb-3 flex items-center gap-2">
                         <CreditCard className="w-4 h-4 text-gray-400" />
-                        <span>支付方式</span>
+                        <span>{t('transport.paymentMethods')}</span>
                       </h4>
                       <div className="flex flex-wrap gap-2">
                         {transport.taxi.paymentMethods.map((method, index) => (
@@ -236,12 +239,9 @@ export function TransportDetailCard({ transport, onClose }: TransportDetailCardP
 
             {/* Tips */}
             <div className="bg-purple-50 rounded-xl p-4">
-              <h4 className="text-sm text-gray-900 mb-2">💡 出行提示</h4>
+              <h4 className="text-sm text-gray-900 mb-2">{t('transport.tipsTitle')}</h4>
               <ul className="text-xs text-gray-600 space-y-1">
-                <li>• 高峰时段（7:00-9:00, 17:00-19:00）地铁可能较为拥挤</li>
-                <li>• 大件行李建议选择打车出行，更加舒适</li>
-                <li>• 提前在手机上安装好相关App，确保网络畅通</li>
-                <li>• 保存好司机信息和车牌号，注意出行安全</li>
+                {tips.map((tip, i) => <li key={i}>• {tip}</li>)}
               </ul>
             </div>
           </div>
@@ -253,7 +253,7 @@ export function TransportDetailCard({ transport, onClose }: TransportDetailCardP
             className="w-full bg-red-500 hover:bg-red-600"
             onClick={onClose}
           >
-            关闭
+            {t('transport.close')}
           </Button>
         </div>
       </div>

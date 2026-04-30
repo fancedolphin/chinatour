@@ -51,3 +51,9 @@ export async function isAuthenticated(): Promise<boolean> {
 }
 
 export default supabase;
+
+// Expose the client to window in dev mode only — the Playwright E2E harness
+// uses `window.__supabase` for fixture seeding. Production bundles never set it.
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  (window as unknown as { __supabase: typeof supabase }).__supabase = supabase;
+}

@@ -4,6 +4,7 @@ import { toast } from 'sonner@2.0.3';
 import { Button } from './ui/button';
 import { useAuthContext } from '@/presentation/context/AuthContext';
 import { followService } from '@/services/followService';
+import { useT } from '@/i18n/useT';
 
 interface FollowButtonProps {
   targetUserId: string;
@@ -18,6 +19,7 @@ export function FollowButton({
   onToggle,
   size = 'md',
 }: FollowButtonProps) {
+  const { t } = useT();
   const { currentUser } = useAuthContext();
   const [isFollowing, setIsFollowing] = useState(initialIsFollowing);
   const [loading, setLoading] = useState(false);
@@ -37,7 +39,7 @@ export function FollowButton({
 
   const handleClick = async () => {
     if (!currentUser) {
-      toast.error('请先登录');
+      toast.error(t('follow.loginRequired'));
       return;
     }
 
@@ -60,7 +62,7 @@ export function FollowButton({
       const rollbackValue = !optimisticValue;
       setIsFollowing(rollbackValue);
       onToggle?.(rollbackValue);
-      toast.error(error instanceof Error ? error.message : '操作失败');
+      toast.error(error instanceof Error ? error.message : t('follow.operationFailed'));
     } finally {
       setLoading(false);
     }
@@ -82,9 +84,9 @@ export function FollowButton({
       {loading ? (
         <Loader2 className="h-4 w-4 animate-spin" />
       ) : isFollowing ? (
-        hovered ? '取消关注' : '已关注'
+        hovered ? t('follow.unfollow') : t('follow.following')
       ) : (
-        '关注'
+        t('follow.follow')
       )}
     </Button>
   );

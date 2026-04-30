@@ -3,6 +3,8 @@
  * 包含主要省份、直辖市、自治区及热门旅游城市
  */
 
+import { pinyin } from 'pinyin-pro';
+
 export interface City {
   code: string;
   name: string;
@@ -431,13 +433,56 @@ export function getCitiesByProvince(): Record<string, City[]> {
 }
 
 /**
- * 搜索城市
+ * Pinyin cache — derived once per city. Stores both joined ("beijing")
+ * and initials ("bj") so users can match by either.
+ */
+const pinyinCache = new Map<string, { full: string; initials: string }>();
+
+function getPinyin(text: string): { full: string; initials: string } {
+  const cached = pinyinCache.get(text);
+  if (cached) return cached;
+  const full = pinyin(text, { toneType: 'none', type: 'array' }).join('').toLowerCase();
+  const initials = pinyin(text, { pattern: 'first', toneType: 'none', type: 'array' })
+    .join('')
+    .toLowerCase();
+  const entry = { full, initials };
+  pinyinCache.set(text, entry);
+  return entry;
+}
+
+/**
+ * Display name in the active locale. EN site renders pinyin (capitalized);
+ * ZH site keeps the Chinese name unchanged.
+ */
+export function getCityDisplayName(city: City, locale: 'zh' | 'en'): string {
+  if (locale !== 'en') return city.name;
+  const py = getPinyin(city.name).full;
+  return py.charAt(0).toUpperCase() + py.slice(1);
+}
+
+export function getProvinceDisplayName(province: string, locale: 'zh' | 'en'): string {
+  if (locale !== 'en') return province;
+  const py = getPinyin(province).full;
+  return py.charAt(0).toUpperCase() + py.slice(1);
+}
+
+/**
+ * 搜索城市 — 中文 / 拼音 / 拼音首字母 / 省份名 同时匹配。
  */
 export function searchCities(query: string): City[] {
   if (!query) return chineseCities;
-  const lowerQuery = query.toLowerCase();
-  return chineseCities.filter(city => 
-    city.name.toLowerCase().includes(lowerQuery) ||
-    city.province.toLowerCase().includes(lowerQuery)
-  );
+  const q = query.trim().toLowerCase();
+  return chineseCities.filter((city) => {
+    if (city.name.toLowerCase().includes(q)) return true;
+    if (city.province.toLowerCase().includes(q)) return true;
+
+    const namePy = getPinyin(city.name);
+    if (namePy.full.includes(q)) return true;
+    if (namePy.initials.includes(q)) return true;
+
+    const provincePy = getPinyin(city.province);
+    if (provincePy.full.includes(q)) return true;
+
+    return false;
+  });
 }
